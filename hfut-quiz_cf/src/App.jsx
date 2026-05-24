@@ -1647,7 +1647,7 @@ function App() {
             URL.revokeObjectURL(url);
             setSyncStatus('success');
             setSyncMsg("导出成功");
-            return;
+
         } catch (err) {
             console.error('Export failed', err);
             setSyncStatus('error');

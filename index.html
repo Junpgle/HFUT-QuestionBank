@@ -198,7 +198,7 @@
         const urls = Array.isArray(sources) ? sources : [sources];
         for (const url of urls) {
             try { await loadOne(url); return; }
-            catch (e) { console.warn(`Source failed, trying next: ${url}`); continue; }
+            catch (e) { console.warn(`Source failed, trying next: ${url}`);  }
         }
         throw new Error(`所有源加载失败: ${urls.join(', ')}`);
     };

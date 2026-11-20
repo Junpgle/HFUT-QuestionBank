@@ -2462,22 +2462,22 @@ function App() {
         const list = questionThread[questionId]?.explanations;
         if (!list || list.length === 0) return null;
         return (
-            <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-2">
-                <p className="text-xs font-semibold text-slate-600 flex items-center gap-2">
+            <div className="mt-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3 space-y-2">
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-2">
                     <BookOpen size={14}/> 用户提供的解析
                 </p>
                 {list.map((exp) => {
                     const isOwner = exp.authorId === currentUser?.id;
                     const isEditing = editingExplanationId === exp.id;
                     return (
-                        <div key={exp.id} className="p-2 rounded-lg bg-white border border-slate-100 space-y-2">
-                            <div className="text-xs text-slate-500 flex justify-between items-center">
+                        <div key={exp.id} className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 space-y-2">
+                            <div className="text-xs text-slate-500 dark:text-slate-400 flex justify-between items-center">
                                 <span>{exp.author} · {formatDate(exp.createdAt)}</span>
                                 {isOwner && !isEditing && (
                                     <button onClick={() => {
                                         setEditingExplanationId(exp.id);
                                         setEditingExplanationContent(exp.content);
-                                    }} className="text-blue-600 text-xs">编辑</button>
+                                    }} className="text-blue-600 dark:text-blue-400 text-xs">编辑</button>
                                 )}
                             </div>
                             {isEditing ? (
@@ -2485,7 +2485,7 @@ function App() {
                                 <textarea
                                     value={editingExplanationContent}
                                     onChange={(e) => setEditingExplanationContent(e.target.value)}
-                                    className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                    className="w-full p-2 border border-slate-200 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                                     rows={4}
                                 />
                                     <div className="flex gap-2 justify-end text-xs">
@@ -2495,7 +2495,7 @@ function App() {
                                         <button onClick={() => {
                                             setEditingExplanationId(null);
                                             setEditingExplanationContent('');
-                                        }} className="px-3 py-1 bg-slate-200 text-slate-700 rounded-lg">取消
+                                        }} className="px-3 py-1 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg">取消
                                         </button>
                                     </div>
                                 </div>

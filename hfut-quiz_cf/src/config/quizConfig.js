@@ -27,6 +27,12 @@ export const MAOGAO_CHAPTERS = [
   { id: 9, name: '第八章' },
 ];
 
+export const ENGLISH_CULTURE_CHAPTERS = [
+  { id: 1, name: '作业一' },
+  { id: 2, name: '作业二' },
+  { id: 3, name: '作业三' },
+];
+
 export const SUBJECTS = [
   {
     id: 'innovation',
@@ -58,6 +64,17 @@ export const SUBJECTS = [
     lectures: [{ id: 1, name: '全部题目' }],
     getChapters: (bank) => [{ id: 1, name: '全部题目' }].filter((ch) => bank[ch.id]?.length),
     getChapterName: () => '全部题目',
+  },
+  {
+    id: 'english-culture',
+    name: '英语国家社会与文化',
+    shortName: '英美文化',
+    category: '公共课程',
+    icon: '🌍',
+    file: 'english-culture.json',
+    chapters: ENGLISH_CULTURE_CHAPTERS,
+    getChapters: (bank) => ENGLISH_CULTURE_CHAPTERS.filter((ch) => bank[ch.id]?.length),
+    getChapterName: (id) => ENGLISH_CULTURE_CHAPTERS.find((ch) => ch.id === id)?.name || `章节${id}`,
   },
 ];
 

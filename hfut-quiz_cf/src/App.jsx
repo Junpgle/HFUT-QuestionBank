@@ -21,6 +21,7 @@ import {
     Bookmark, Eye, TrendingUp, ThumbsUp, X
 } from 'lucide-react';
 import {validateContent} from './contentFilter.js';
+import {parseEnglishCultureJson} from './maogaiParser';
 import {Markdown} from './components/Markdown';
 import {LoginScreen} from './components/LoginScreen';
 import {QuestionDetailModal} from './components/QuestionDetailModal';
@@ -66,6 +67,7 @@ const getQuestionSubjectId = (questionId) => {
         const idx = qid.lastIndexOf('-Q');
         return idx > 0 ? qid.slice(0, idx) : null;
     }
+    if (qid.startsWith('ENG-CUL-')) return 'english-culture';
     if (qid.startsWith('HGD-MG-')) return 'hgdmy-maogai';
     if (qid.startsWith('MG-')) return 'maogai';
     if (/^(OLD-|L\d+-)/.test(qid)) return 'innovation';
@@ -115,6 +117,7 @@ function App() {
             if (s.id === 'innovation') totalCount = 1575;
             else if (s.id === 'maogai') totalCount = 1084;
             else if (s.id === 'hgdmy-maogai') totalCount = 583;
+            else if (s.id === 'english-culture') totalCount = 169;
             else {
                 totalCount = s.questionCount || customSubjectCounts[s.id] || 0;
             }
@@ -1166,6 +1169,32 @@ function App() {
                     }
                     return;
                 }
+                if (subject.id === 'english-culture') {
+                    setBankProgress('正在加载英语国家社会与文化题库...');
+                    try {
+                        const url = '/english-culture.json';
+                        const res = await fetch(url);
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        const rawJson = await res.json();
+                        const parsed = parseEnglishCultureJson(rawJson);
+                        if (Object.keys(parsed).length > 0) {
+                            setAllQuestionBank(parsed);
+                            setBankStatus('ready');
+                            await safeSet(cacheKey, parsed);
+                            await safeSet(cacheVerKey, BANK_CACHE_VERSION);
+                            setBankProgress('题库已就绪');
+                            setBankPercent(100);
+                        } else {
+                            throw new Error('解析结果为空');
+                        }
+                    } catch (error) {
+                        console.warn('英语国家社会与文化题库加载失败', error);
+                        setBankStatus('error');
+                        setErrorMsg("英语国家社会与文化题库加载失败: " + error.message);
+                        setBankPercent(0);
+                    }
+                    return;
+                }
                 const lectures = subject.lectures || LECTURES;
                 const total = lectures.length;
                 const newBank = {};
@@ -1279,6 +1308,30 @@ function App() {
                 console.warn('马院毛概题库强制更新失败', error);
                 setBankStatus('error');
                 setErrorMsg("马院毛概题库强制更新失败: " + error.message);
+                setBankPercent(0);
+                return;
+            }
+        }
+        if (subject.id === 'english-culture') {
+            try {
+                const url = '/english-culture.json';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const rawJson = await res.json();
+                const parsed = parseEnglishCultureJson(rawJson);
+                if (Object.keys(parsed).length > 0) {
+                    setAllQuestionBank(parsed);
+                    setBankStatus('ready');
+                    await safeSet(cacheKey, parsed);
+                    await safeSet(cacheVerKey, BANK_CACHE_VERSION);
+                    setBankProgress('题库已更新');
+                    setBankPercent(100);
+                    return;
+                }
+            } catch (error) {
+                console.warn('英语国家社会与文化题库强制更新失败', error);
+                setBankStatus('error');
+                setErrorMsg("英语国家社会与文化题库强制更新失败: " + error.message);
                 setBankPercent(0);
                 return;
             }

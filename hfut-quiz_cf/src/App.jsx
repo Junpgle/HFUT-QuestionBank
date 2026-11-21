@@ -1,6 +1,6 @@
 /* eslint-disable no-unused-vars, no-undef, react-hooks/exhaustive-deps, no-empty */
 /*
-* version: 5.2.1 (Cloudflare Migration)
+* version: 5.2.2 (Cloudflare Migration)
 * */
 import {useState, useEffect, useRef, useMemo} from 'react';
 import {flushSync} from 'react-dom';
@@ -43,6 +43,7 @@ import {
 import {formatDate} from './utils/date';
 import {safeGet, safeSet} from './utils/storage';
 import {normalizeSet} from './utils/questionId';
+import {forceAppReload, isNewerVersion} from './utils/appUpdate';
 import {parseFillAnswer, gradeFill} from './utils/fillAnswer';
 import {getSubjectById, getSubjectChapterOptions} from './utils/subjectAdapter';
 import {
@@ -872,19 +873,18 @@ function App() {
     };
     useEffect(() => {
         const checkVersion = async () => {
-            if (!currentUser || apiLimitReached) return;
+            if (apiLimitReached) return;
             try {
                 const lastChecked = Number(localStorage.getItem('app_version_checked_at') || 0);
                 if (Date.now() - lastChecked < 6 * 60 * 60 * 1000) return;
-                // 假设后端接口返回格式: { success: true, version: "4.0.3", changelog: "..." }
-                // 或者直接存放在 SystemConfig 表中
+                // 后端接口返回格式: { success: true, key: "app_version", value: "5.2.1", changelog: "..." }
                 const res = await api.request('/SystemConfig?key=app_version');
                 localStorage.setItem('app_version_checked_at', String(Date.now()));
                 if (res && res.success) {
-                    const latestVersion = res.version || res.data?.value;
+                    const latestVersion = String(res.value || res.version || res.data?.value || '').trim();
                     const changelog = res.changelog || res.data?.changelog || '修复了一些已知问题并提升了稳定性。';
-                    // 只有当远程版本号与本地 CURRENT_APP_VERSION 不一致时才弹窗
-                    if (latestVersion && latestVersion !== CURRENT_APP_VERSION) {
+                    // 只有当远程版本号高于本地 CURRENT_APP_VERSION 时才弹窗
+                    if (isNewerVersion(latestVersion, CURRENT_APP_VERSION)) {
                         setRemoteVersionInfo({
                             version: latestVersion,
                             log: changelog
@@ -900,7 +900,7 @@ function App() {
         // 延迟 3 秒检查，避开首屏题库加载的高峰期
         const timer = setTimeout(checkVersion, 3000);
         return () => clearTimeout(timer);
-    }, [currentUser, apiLimitReached]);
+    }, [apiLimitReached]);
     // --- Hooks (本地数据加载) ---
     useEffect(() => {
         const loadLocal = async () => {
@@ -2940,7 +2940,7 @@ function App() {
                     open={showUpdateModal}
                     currentVersion={CURRENT_APP_VERSION}
                     remoteVersionInfo={remoteVersionInfo}
-                    onReload={() => window.location.reload()}
+                    onReload={forceAppReload}
                     onClose={() => setShowUpdateModal(false)}
                 />
             }

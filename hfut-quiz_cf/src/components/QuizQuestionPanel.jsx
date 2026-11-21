@@ -1,4 +1,4 @@
-import { CheckCircle, CheckSquare, XCircle } from 'lucide-react';
+import { CheckCircle, CheckSquare, Star, XCircle } from 'lucide-react';
 import { getQuestionTypeBadgeClass, getQuestionTypeLabel } from '../utils/questionType';
 
 export function QuizQuestionPanel({
@@ -6,16 +6,35 @@ export function QuizQuestionPanel({
   isQuiz,
   isAnswered,
   selectedIndices,
+  isFavorited,
+  onToggleFavorite,
   onOptionClick,
   onSubmit,
 }) {
   return (
     <div className="md:col-span-2 bg-white rounded-[1.5rem] md:rounded-[2rem] p-5 md:p-8 shadow-sm border border-slate-200 animate-enter h-full flex flex-col dark:bg-slate-900 dark:border-slate-800">
-      <div className="flex items-center gap-3 mb-4 md:mb-6">
-        <span className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider ${getQuestionTypeBadgeClass(currentQ.type)}`}>
-          {`${getQuestionTypeLabel(currentQ.type)}题`}
-        </span>
-        <span className="text-slate-400 text-xs md:text-sm font-medium flex items-center gap-1 dark:text-slate-500">{currentQ.category}</span>
+      <div className="flex items-center justify-between gap-3 mb-4 md:mb-6">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider shrink-0 ${getQuestionTypeBadgeClass(currentQ.type)}`}>
+            {`${getQuestionTypeLabel(currentQ.type)}题`}
+          </span>
+          <span className="text-slate-400 text-xs md:text-sm font-medium flex items-center gap-1 truncate dark:text-slate-500">{currentQ.category}</span>
+        </div>
+        {onToggleFavorite && (
+          <button
+            type="button"
+            onClick={onToggleFavorite}
+            aria-pressed={!!isFavorited}
+            aria-label={isFavorited ? '取消收藏此题' : '收藏此题'}
+            className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all
+              ${isFavorited
+                ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/30 dark:border-amber-800/70 dark:text-amber-300 dark:hover:bg-amber-950/50'
+                : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-amber-600 hover:border-amber-200 hover:bg-amber-50/60 dark:bg-slate-800/70 dark:border-slate-700 dark:text-slate-400 dark:hover:text-amber-300 dark:hover:border-amber-800/60'}`}
+          >
+            <Star size={15} aria-hidden="true" className={isFavorited ? 'fill-amber-400 text-amber-500 dark:fill-amber-400 dark:text-amber-400' : ''} />
+            <span>{isFavorited ? '已收藏' : '收藏'}</span>
+          </button>
+        )}
       </div>
       <h2 className="text-lg md:text-2xl font-bold text-slate-900 leading-relaxed mb-4 dark:text-slate-100">{currentQ.question}</h2>
       <div className="grid gap-3">

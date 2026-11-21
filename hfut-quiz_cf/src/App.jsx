@@ -18,7 +18,7 @@ import {
     BookOpen, CheckCircle, Brain, Settings,
     ChevronRight, Layers, Loader2,
     AlertTriangle, PieChart, BarChart3, Zap,
-    Bookmark, Eye, TrendingUp, ThumbsUp, X
+    Bookmark, Eye, TrendingUp, ThumbsUp, X, Star
 } from 'lucide-react';
 import {validateContent} from './contentFilter.js';
 import {parseEnglishCultureJson} from './maogaiParser';
@@ -98,6 +98,7 @@ function App() {
     const [memorizedIds, setMemorizedIds] = useState(new Set());
     const [masteredIds, setMasteredIds] = useState(new Set());
     const [wrongIds, setWrongIds] = useState(new Set());
+    const [favoriteIds, setFavoriteIds] = useState(new Set());
     const [customSubjectCounts, setCustomSubjectCounts] = useState({});
     const [customSubjects, setCustomSubjects] = useState([]);
     const allSubjects = useMemo(() => {
@@ -174,6 +175,21 @@ function App() {
         return new Set(filtered);
     }, [brushedIds, currentSubjectQids]);
 
+    const currentFavoriteIds = useMemo(() => {
+        const filtered = Array.from(favoriteIds).filter(id => currentSubjectQids.has(id));
+        return new Set(filtered);
+    }, [favoriteIds, currentSubjectQids]);
+
+    const toggleFavorite = (questionId) => {
+        if (!questionId) return;
+        setFavoriteIds(prev => {
+            const next = new Set(prev);
+            if (next.has(questionId)) next.delete(questionId);
+            else next.add(questionId);
+            return next;
+        });
+    };
+
     const currentHistory = useMemo(() => {
         return history.filter(h => h && h.questionId && currentSubjectQids.has(h.questionId));
     }, [history, currentSubjectQids]);
@@ -193,8 +209,9 @@ function App() {
         const memorized = filterProgressBySubject(Array.from(memorizedIds), subjectId);
         const mastered = filterProgressBySubject(Array.from(masteredIds), subjectId);
         const wrong = filterProgressBySubject(Array.from(wrongIds), subjectId);
+        const favorite = filterProgressBySubject(Array.from(favoriteIds), subjectId);
         const hist = filterHistoryBySubject(history, subjectId);
-        return { brushed, memorized, mastered, wrong, history: hist };
+        return { brushed, memorized, mastered, wrong, favorite, history: hist };
     };
     const dedupeAndSortHistory = (items = []) => {
         const seen = new Set();
@@ -297,7 +314,7 @@ function App() {
     }, [selectedSubject]);
     useEffect(() => {
         // 兜底恢复：如果学科被异常清空，但仍有练习会话，则恢复到上一次有效学科
-        if (!selectedSubject && questions.length > 0 && ['quiz', 'memorize', 'mistakes', 'dashboard'].includes(currentMode)) {
+        if (!selectedSubject && questions.length > 0 && ['quiz', 'memorize', 'mistakes', 'favorites', 'dashboard'].includes(currentMode)) {
             const fallback = lastSelectedSubjectRef.current;
             if (fallback) {
                 setSelectedSubject(fallback);
@@ -338,6 +355,7 @@ function App() {
                 setMemorizedIds(normalizeSet(p.memorizedIds));
                 setMasteredIds(normalizeSet(p.masteredIds));
                 setWrongIds(normalizeSet(p.wrongIds));
+                setFavoriteIds(normalizeSet(p.favoriteIds));
                 setHistory(p.history || []);
                 if (res.onlineCount) setOnlineCount(res.onlineCount);
                 setSyncMsg("同步已完成");
@@ -361,6 +379,7 @@ function App() {
                 memorizedIds: Array.from(memorizedIds).filter(id => id && !id.startsWith('custom_')),
                 masteredIds: Array.from(masteredIds).filter(id => id && !id.startsWith('custom_')),
                 wrongIds: Array.from(wrongIds).filter(id => id && !id.startsWith('custom_')),
+                favoriteIds: Array.from(favoriteIds).filter(id => id && !id.startsWith('custom_')),
                 history: history.filter(h => h && h.questionId && !h.questionId.startsWith('custom_')).slice(0, 500)
             } : null
         };
@@ -467,7 +486,8 @@ function App() {
         lectureId: 0,
         type: 'all',
         includeAnswered: true,
-        includeUnanswered: true
+        includeUnanswered: true,
+        onlyFavorites: false
     });
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     // --- 核心工具函数：数据加载与防抖 ---
@@ -871,6 +891,7 @@ function App() {
                 setMemorizedIds(normalizeSet(await getSet('app_memorizedIds')));
                 setMasteredIds(normalizeSet(await getSet('app_masteredIds')));
                 setWrongIds(normalizeSet(await getSet('app_wrongIds')));
+                setFavoriteIds(normalizeSet(await getSet('app_favoriteIds')));
                 const hist = await safeGet('app_history');
                 if (hist) setHistory(hist);
                 const notes = await safeGet('app_custom_notes', {});
@@ -932,11 +953,13 @@ function App() {
         const updatedMemorized = new Set(Array.from(memorizedIds).filter(id => id && !id.startsWith(subjectId)));
         const updatedMastered = new Set(Array.from(masteredIds).filter(id => id && !id.startsWith(subjectId)));
         const updatedWrong = new Set(Array.from(wrongIds).filter(id => id && !id.startsWith(subjectId)));
+        const updatedFavorite = new Set(Array.from(favoriteIds).filter(id => id && !id.startsWith(subjectId)));
         const updatedHistory = history.filter(h => h && h.questionId && !h.questionId.startsWith(subjectId));
         setBrushedIds(updatedBrushed);
         setMemorizedIds(updatedMemorized);
         setMasteredIds(updatedMastered);
         setWrongIds(updatedWrong);
+        setFavoriteIds(updatedFavorite);
         setHistory(updatedHistory);
         
         if (selectedSubject === subjectId) {
@@ -958,6 +981,9 @@ function App() {
     useEffect(() => {
         if (hydrated) safeSet('app_wrongIds', Array.from(wrongIds));
     }, [wrongIds, hydrated]);
+    useEffect(() => {
+        if (hydrated) safeSet('app_favoriteIds', Array.from(favoriteIds));
+    }, [favoriteIds, hydrated]);
     useEffect(() => {
         if (hydrated) safeSet('app_history', history);
     }, [history, hydrated]);
@@ -1421,6 +1447,7 @@ function App() {
                 memorizedIds: sanitizeCloudIds(snapshot.memorized),
                 masteredIds: sanitizeCloudIds(snapshot.mastered),
                 wrongIds: sanitizeCloudIds(snapshot.wrong),
+                favoriteIds: sanitizeCloudIds(snapshot.favorite),
                 history: sanitizeCloudHistory(snapshot.history).slice(0, 500) // 限制长度
             });
             if (response && response.success) {
@@ -1459,7 +1486,7 @@ function App() {
         if (!currentUser) return;
         if (!silent) {
             const ok = window.confirm(
-                "将从云端恢复的内容：\n- 创新创业/毛概/马院毛概的答题状态（已刷/已背/已掌握/错题）\n- 历史记录\n\n恢复方式：与本地合并去重，不会覆盖自定义题库。\n\n是否继续恢复？"
+                "将从云端恢复的内容：\n- 创新创业/毛概/马院毛概的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录\n\n恢复方式：与本地合并去重，不会覆盖自定义题库。\n\n是否继续恢复？"
             );
             if (!ok) return;
         }
@@ -1478,6 +1505,7 @@ function App() {
                 let newMemorized = new Set(memorizedIds);
                 let newMastered = new Set(masteredIds);
                 let newWrong = new Set(wrongIds);
+                let newFavorite = new Set(favoriteIds);
                 let newHistory = [...history];
                 // 解析 JSON (D1 中存的是 JSON 字符串，后端可能已解析或需前端解析)
                 // 假设后端返回的是对象
@@ -1496,11 +1524,13 @@ function App() {
                 const cloudMemorized = itemsWithoutCustom(getArr(data.memorizedIds));
                 const cloudMastered = itemsWithoutCustom(getArr(data.masteredIds));
                 const cloudWrong = itemsWithoutCustom(getArr(data.wrongIds));
+                const cloudFavorite = itemsWithoutCustom(getArr(data.favoriteIds));
                 const cloudHistory = getArr(data.history).filter(h => h && h.questionId && !String(h.questionId).startsWith('custom_'));
                 if (cloudBrushed.length) newBrushed = new Set([...newBrushed, ...cloudBrushed]);
                 if (cloudMemorized.length) newMemorized = new Set([...newMemorized, ...cloudMemorized]);
                 if (cloudMastered.length) newMastered = new Set([...newMastered, ...cloudMastered]);
                 if (cloudWrong.length) newWrong = new Set([...newWrong, ...cloudWrong]);
+                if (cloudFavorite.length) newFavorite = new Set([...newFavorite, ...cloudFavorite]);
                 if (cloudHistory.length) {
                     const existingIds = new Set(newHistory.map(h => h.id));
                     const merged = [...cloudHistory.filter(h => !existingIds.has(h.id)), ...newHistory]
@@ -1511,12 +1541,14 @@ function App() {
                 setMemorizedIds(newMemorized);
                 setMasteredIds(newMastered);
                 setWrongIds(newWrong);
+                setFavoriteIds(newFavorite);
                 setHistory(newHistory);
                 await Promise.all([
                     safeSet('app_brushedIds', Array.from(newBrushed)),
                     safeSet('app_memorizedIds', Array.from(newMemorized)),
                     safeSet('app_masteredIds', Array.from(newMastered)),
                     safeSet('app_wrongIds', Array.from(newWrong)),
+                    safeSet('app_favoriteIds', Array.from(newFavorite)),
                     safeSet('app_history', newHistory)
                 ]);
                 if (!silent) {
@@ -1573,6 +1605,7 @@ function App() {
                 memorized: [],
                 mastered: [],
                 wrong: [],
+                favorite: [],
                 history: []
             };
             chosenSubjects.forEach(subId => {
@@ -1581,6 +1614,7 @@ function App() {
                 scopeSnapshot.memorized.push(...one.memorized);
                 scopeSnapshot.mastered.push(...one.mastered);
                 scopeSnapshot.wrong.push(...one.wrong);
+                scopeSnapshot.favorite.push(...one.favorite);
                 scopeSnapshot.history.push(...one.history);
             });
             if (exportType === 'progress') {
@@ -1599,6 +1633,7 @@ function App() {
                         memorizedIds: Array.from(new Set(scopeSnapshot.memorized)),
                         masteredIds: Array.from(new Set(scopeSnapshot.mastered)),
                         wrongIds: Array.from(new Set(scopeSnapshot.wrong)),
+                        favoriteIds: Array.from(new Set(scopeSnapshot.favorite)),
                         history: dedupeAndSortHistory(scopeSnapshot.history)
                     }
                 };
@@ -1654,6 +1689,7 @@ function App() {
                         memorizedIds: Array.from(new Set(scopeSnapshot.memorized)),
                         masteredIds: Array.from(new Set(scopeSnapshot.mastered)),
                         wrongIds: Array.from(new Set(scopeSnapshot.wrong)),
+                        favoriteIds: Array.from(new Set(scopeSnapshot.favorite)),
                         history: dedupeAndSortHistory(scopeSnapshot.history)
                     }
                 };
@@ -1733,6 +1769,7 @@ function App() {
                         ...(Array.isArray(p.memorizedIds) ? p.memorizedIds : []),
                         ...(Array.isArray(p.masteredIds) ? p.masteredIds : []),
                         ...(Array.isArray(p.wrongIds) ? p.wrongIds : []),
+                        ...(Array.isArray(p.favoriteIds) ? p.favoriteIds : []),
                         ...((Array.isArray(p.history) ? p.history : []).map(h => h?.questionId).filter(Boolean))
                     ];
                     return Array.from(new Set(allIds.map(id => getQuestionSubjectId(id)).filter(Boolean)));
@@ -1844,6 +1881,8 @@ function App() {
                     .filter(id => chosenSubjects.includes(getQuestionSubjectId(id)));
                 const importedWrong = filterProgressBySubject(Array.from(normalizeSet(p.wrongIds)), 'all')
                     .filter(id => chosenSubjects.includes(getQuestionSubjectId(id)));
+                const importedFavorite = filterProgressBySubject(Array.from(normalizeSet(p.favoriteIds)), 'all')
+                    .filter(id => chosenSubjects.includes(getQuestionSubjectId(id)));
                 const importedHistory = dedupeAndSortHistory(filterHistoryBySubject(p.history || [], 'all')
                     .filter(h => chosenSubjects.includes(getQuestionSubjectId(h.questionId))));
                 const confirmMerge = window.confirm("发现有效数据。点击'确定'将新数据与当前进度【合并】，点击'取消'则【覆盖】当前进度。");
@@ -1852,6 +1891,7 @@ function App() {
                     setMemorizedIds(prev => new Set([...prev, ...importedMemorized]));
                     setMasteredIds(prev => new Set([...prev, ...importedMastered]));
                     setWrongIds(prev => new Set([...prev, ...importedWrong]));
+                    setFavoriteIds(prev => new Set([...prev, ...importedFavorite]));
                     setHistory(prev => {
                         const combined = [...importedHistory, ...prev];
                         return dedupeAndSortHistory(combined);
@@ -1863,6 +1903,7 @@ function App() {
                             setMemorizedIds(new Set(importedMemorized));
                             setMasteredIds(new Set(importedMastered));
                             setWrongIds(new Set(importedWrong));
+                            setFavoriteIds(new Set(importedFavorite));
                             setHistory(dedupeAndSortHistory(importedHistory));
                         } else {
                             setBrushedIds(prev => new Set([
@@ -1880,6 +1921,10 @@ function App() {
                             setWrongIds(prev => new Set([
                                 ...filterProgressBySubject(Array.from(prev), 'all').filter(id => !chosenSubjects.includes(getQuestionSubjectId(id))),
                                 ...importedWrong
+                            ]));
+                            setFavoriteIds(prev => new Set([
+                                ...filterProgressBySubject(Array.from(prev), 'all').filter(id => !chosenSubjects.includes(getQuestionSubjectId(id))),
+                                ...importedFavorite
                             ]));
                             setHistory(prev => {
                                 const remained = prev.filter(h => !h?.questionId || !chosenSubjects.includes(getQuestionSubjectId(h.questionId)));
@@ -1912,6 +1957,7 @@ function App() {
         setMemorizedIds(new Set());
         setMasteredIds(new Set());
         setWrongIds(new Set());
+        setFavoriteIds(new Set());
         setHistory([]);
         setLastSession(null);
         
@@ -1920,6 +1966,7 @@ function App() {
         localforage.removeItem('app_memorizedIds').catch(console.warn);
         localforage.removeItem('app_masteredIds').catch(console.warn);
         localforage.removeItem('app_wrongIds').catch(console.warn);
+        localforage.removeItem('app_favoriteIds').catch(console.warn);
         localforage.removeItem('app_history').catch(console.warn);
         localforage.removeItem('app_lastSession').catch(console.warn);
 
@@ -1927,6 +1974,7 @@ function App() {
         localStorage.removeItem('app_memorizedIds');
         localStorage.removeItem('app_masteredIds');
         localStorage.removeItem('app_wrongIds');
+        localStorage.removeItem('app_favoriteIds');
         localStorage.removeItem('app_history');
         localStorage.removeItem('app_lastSession');
         
@@ -1944,6 +1992,7 @@ function App() {
         }
         if (quizConfig.filter === 'new') sourcePool = sourcePool.filter(q => !brushedIds.has(q.id));
         else if (quizConfig.filter === 'wrong') sourcePool = sourcePool.filter(q => wrongIds.has(q.id));
+        else if (quizConfig.filter === 'favorite') sourcePool = sourcePool.filter(q => favoriteIds.has(q.id));
         if (sourcePool.length === 0) {
             alert("该条件下没有可用题目");
             return;
@@ -1989,26 +2038,47 @@ function App() {
         setSelectedByQuestion({});
         startMode('mistakes');
     };
+    const startFavoriteNotebook = () => {
+        if (bankStatus !== 'ready') return;
+        setCurrentIndex(0);
+        setLastSession(null);
+        const allQs = Object.values(allQuestionBank).flat();
+        const favQs = allQs.filter(q => favoriteIds.has(q.id));
+        if (favQs.length === 0) {
+            alert("暂无收藏题目，做题时点击星标即可收藏！");
+            return;
+        }
+        favQs.sort(() => 0.5 - Math.random());
+        setQuestions(favQs);
+        setAnswerResults({});
+        setSelectedByQuestion({});
+        startMode('favorites');
+    };
     const performSearch = (keyword = searchKeyword) => {
         if (bankStatus !== 'ready') return;
-        if (!keyword.trim()) {
+        if (!keyword.trim() && !searchFilters.onlyFavorites) {
             setSearchResults([]);
             setShowSearchResults(false);
             return;
         }
         const allQs = Object.values(allQuestionBank).flat();
         const lowerKeyword = keyword.toLowerCase().trim();
-        let results = allQs.filter(q => {
-            const questionMatch = q.question?.toLowerCase().includes(lowerKeyword) || false;
-            const optionsMatch = q.options?.some(opt => opt && opt.toLowerCase().includes(lowerKeyword)) || false;
-            const explanationMatch = q.explanation?.toLowerCase().includes(lowerKeyword) || false;
-            return questionMatch || optionsMatch || explanationMatch;
-        });
+        let results = lowerKeyword
+            ? allQs.filter(q => {
+                const questionMatch = q.question?.toLowerCase().includes(lowerKeyword) || false;
+                const optionsMatch = q.options?.some(opt => opt && opt.toLowerCase().includes(lowerKeyword)) || false;
+                const explanationMatch = q.explanation?.toLowerCase().includes(lowerKeyword) || false;
+                return questionMatch || optionsMatch || explanationMatch;
+            })
+            : [...allQs];
         if (searchFilters.lectureId !== 0) {
             results = results.filter(q => q.lectureId === searchFilters.lectureId);
         }
         if (searchFilters.type !== 'all') {
             results = results.filter(q => q.type === searchFilters.type);
+        }
+        if (searchFilters.onlyFavorites) {
+            results = results.filter(q => favoriteIds.has(q.id));
         }
         if (!searchFilters.includeAnswered && !searchFilters.includeUnanswered) {
         } else {
@@ -2700,7 +2770,7 @@ function App() {
     };
     const exitToDashboard = () => {
         const action = () => {
-            if (['quiz', 'memorize', 'mistakes'].includes(currentMode) && questions.length > 0 && currentIndex < questions.length - 1) {
+            if (['quiz', 'memorize', 'mistakes', 'favorites'].includes(currentMode) && questions.length > 0 && currentIndex < questions.length - 1) {
                 setLastSession({
                     mode: currentMode,
                     questions,
@@ -2800,6 +2870,7 @@ function App() {
                     setShowSearchResults={setShowSearchResults}
                     openSearchQuestion={openSearchQuestion}
                     setIsSearchOpen={setIsSearchOpen}
+                    favoriteIds={favoriteIds}
                 />
             }
             resetModal={
@@ -2883,11 +2954,11 @@ function App() {
                                     <div className="md:col-span-2">
                                         <label
                                             className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block ml-1 dark:text-slate-500">模式</label>
-                                        <div className="grid grid-cols-3 gap-2 bg-slate-50 p-1.5 rounded-2xl dark:bg-slate-950">
+                                        <div className="grid grid-cols-4 gap-2 bg-slate-50 p-1.5 rounded-2xl dark:bg-slate-950">
                                             {[{v: 'all', l: '随机'}, {v: 'new', l: '未做'}, {
                                                 v: 'wrong',
                                                 l: '错题'
-                                            }].map(m => (
+                                            }, {v: 'favorite', l: '收藏'}].map(m => (
                                                 <button key={m.v}
                                                         onClick={() => setQuizConfig({...quizConfig, filter: m.v})}
                                                         className={`py-2 rounded-xl text-xs md:text-sm font-bold transition-all ${quizConfig.filter === m.v ? 'bg-white shadow text-blue-600 dark:bg-slate-900 dark:text-blue-400 dark:shadow-indigo-950/45' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'}`}>{m.l}</button>
@@ -2995,7 +3066,7 @@ function App() {
                                         size={24}/></div>
                                     <div>
                                         <h3 className="font-bold text-lg">继续上次的学习</h3>
-                                        <p className="text-indigo-100 text-xs md:text-sm">{lastSession.mode === 'memorize' ? '背题模式' : (lastSession.mode === 'mistakes' ? '错题攻坚' : '刷题模式')} ·
+                                        <p className="text-indigo-100 text-xs md:text-sm">{lastSession.mode === 'memorize' ? '背题模式' : (lastSession.mode === 'mistakes' ? '错题攻坚' : (lastSession.mode === 'favorites' ? '我的收藏' : '刷题模式'))} ·
                                             剩余 {lastSession.questions.length - lastSession.currentIndex} 题</p>
                                     </div>
                                 </div>
@@ -3003,7 +3074,7 @@ function App() {
                                     <ChevronRight size={24}/></div>
                             </div>
                         )}
-                        <div className={`grid ${currentSubject?.isCustom ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-4`}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div onClick={startMistakeNotebook}
                                  className="bg-gradient-to-br from-red-500 to-rose-600 p-4 sm:p-5 rounded-2xl sm:rounded-[2rem] shadow-lg shadow-red-200 text-white cursor-pointer hover:scale-[1.02] transition-transform duration-300 ease-in-out will-change-transform relative overflow-hidden group">
                                 <div
@@ -3021,6 +3092,24 @@ function App() {
                                     </div>
                                 </div>
                             </div>
+
+                            <div onClick={startFavoriteNotebook}
+                                 className="bg-gradient-to-br from-amber-400 to-yellow-600 p-4 sm:p-5 rounded-2xl sm:rounded-[2rem] shadow-lg shadow-amber-200 dark:shadow-amber-950/30 text-white cursor-pointer hover:scale-[1.02] transition-transform duration-300 ease-in-out will-change-transform relative overflow-hidden group">
+                                <div
+                                    className="absolute right-0 top-0 w-32 h-32 bg-white opacity-10 rounded-full -mr-8 -mt-8"></div>
+                                <div className="relative z-10 flex flex-col h-full justify-between gap-4">
+                                    <div className="flex justify-between items-start">
+                                        <div className="p-2.5 bg-white/20 rounded-xl backdrop-blur-sm">
+                                            <Star size={20}/></div>
+                                        <span
+                                            className="font-mono text-3xl font-bold opacity-90">{currentFavoriteIds.size}</span>
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold mb-0.5">我的收藏</h3>
+                                        <p className="text-amber-50 text-xs opacity-90">重点题目专项练习</p>
+                                    </div>
+                                </div>
+                            </div>
                             
                             {!currentSubject?.isCustom && (
                                 <div onClick={() => {
@@ -3029,20 +3118,20 @@ function App() {
                                         loadWrongQuestionRanking();
                                     });
                                 }}
-                                     className="bg-gradient-to-br from-orange-500 to-amber-600 p-4 sm:p-5 rounded-2xl sm:rounded-[2rem] shadow-lg shadow-orange-200 text-white cursor-pointer hover:scale-[1.02] transition-transform duration-300 ease-in-out will-change-transform relative overflow-hidden group">
+                                     className="md:col-span-2 bg-gradient-to-br from-orange-500 to-amber-600 p-4 sm:p-5 rounded-2xl sm:rounded-[2rem] shadow-lg shadow-orange-200 text-white cursor-pointer hover:scale-[1.02] transition-transform duration-300 ease-in-out will-change-transform relative overflow-hidden group">
                                     <div
                                         className="absolute right-0 top-0 w-32 h-32 bg-white opacity-10 rounded-full -mr-8 -mt-8"></div>
-                                    <div className="relative z-10 flex flex-col h-full justify-between gap-4">
-                                        <div className="flex justify-between items-start">
+                                    <div className="relative z-10 flex items-center justify-between gap-4">
+                                        <div className="flex items-center gap-3">
                                             <div className="p-2.5 bg-white/20 rounded-xl backdrop-blur-sm">
                                                 <TrendingUp size={20}/>
                                             </div>
-                                            <span className="font-mono text-3xl font-bold opacity-90">📊</span>
+                                            <div>
+                                                <h3 className="text-lg font-bold mb-0.5">易错题排行</h3>
+                                                <p className="text-orange-100 text-xs opacity-90">查看全站最易错的题目</p>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <h3 className="text-lg font-bold mb-0.5">易错题排行</h3>
-                                            <p className="text-orange-100 text-xs opacity-90">查看全站最易错的题目</p>
-                                        </div>
+                                        <span className="font-mono text-2xl font-bold opacity-90">📊</span>
                                     </div>
                                 </div>
                             )}
@@ -3164,6 +3253,8 @@ function App() {
                                     isQuiz={isQuiz}
                                     isAnswered={isAnswered}
                                     selectedIndices={selectedIndices}
+                                    isFavorited={favoriteIds.has(currentQ.id)}
+                                    onToggleFavorite={() => toggleFavorite(currentQ.id)}
                                     onOptionClick={handleOptionClick}
                                     onSubmit={submitAnswer}
                                 />
@@ -3273,6 +3364,8 @@ function App() {
             viewingRankQuestion={viewingRankQuestion}
             onClose={() => setViewingRankQuestion(null)}
             renderUserExplanations={renderUserExplanations}
+            isFavorited={viewingRankQuestion ? favoriteIds.has(viewingRankQuestion.id) : false}
+            onToggleFavorite={() => viewingRankQuestion && toggleFavorite(viewingRankQuestion.id)}
         />
     );
     // --- 排行榜页面 ---
@@ -3346,12 +3439,12 @@ function App() {
         );
     };
     if (!currentUser && showLoginScreen) return renderLoginScreen();
-    const hasActiveQuizSession = ['quiz', 'memorize', 'mistakes'].includes(currentMode) && questions.length > 0;
+    const hasActiveQuizSession = ['quiz', 'memorize', 'mistakes', 'favorites'].includes(currentMode) && questions.length > 0;
     if (!selectedSubject && !hasActiveQuizSession) return renderSubjectSelector();
     return (
         <div className="h-full font-sans text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             {currentMode === 'dashboard' && renderDashboard()}
-            {['quiz', 'memorize', 'mistakes'].includes(currentMode) && renderCard()}
+            {['quiz', 'memorize', 'mistakes', 'favorites'].includes(currentMode) && renderCard()}
             {currentMode === 'ranking' && renderRankingPage()}
             {viewingRankQuestion && renderQuestionDetailModal()}
             {renderSubjectSelectionModal()}

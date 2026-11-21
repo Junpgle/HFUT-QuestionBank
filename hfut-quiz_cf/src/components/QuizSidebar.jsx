@@ -41,7 +41,7 @@ export function QuizSidebar({
       </div>
 
       <div className="p-4 border-t border-slate-100 text-xs text-center text-slate-400 dark:border-slate-800 dark:text-slate-500">
-        {currentMode === 'mistakes' ? '错题复习模式' : (isQuiz ? '刷题模式' : '背题模式')}
+        {currentMode === 'mistakes' ? '错题复习模式' : currentMode === 'favorites' ? '收藏夹模式' : (isQuiz ? '刷题模式' : '背题模式')}
       </div>
     </div>
   );

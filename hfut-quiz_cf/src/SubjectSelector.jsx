@@ -419,9 +419,7 @@ export const SubjectSelector = ({
                                     <p className="text-xs sm:text-sm text-slate-500 leading-relaxed dark:text-slate-400">
                                         {isCustom
                                             ? '用户自定义本地上传题库，纯离线安全刷题'
-                                            : (isInnovation
-                                                ? '7个章节 + 经典旧题库，涵盖创新创业基础全部内容'
-                                                : '9个章节，涵盖毛泽东思想和中国特色社会主义理论体系概论全部内容')}
+                                            : (subject.description || '涵盖课程核心题库内容')}
                                     </p>
                                     {/* 刷题进度 */}
                                     <div className="mt-4 space-y-1.5 select-none">

@@ -8,7 +8,8 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "hono": "^4.11.4"
+    "hono": "^4.11.4",
+    "resend": "^6.39.0"
   },
   "devDependencies": {
     "wrangler": "^4.4.0"

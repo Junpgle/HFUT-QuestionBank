@@ -129,18 +129,19 @@ app.post('/api/sync-all', async (c) => {
 
     if (progress) {
       tasks.push(c.env.DB.prepare(`
-        INSERT INTO UserProgress (user_id, brushed_ids, memorized_ids, mastered_ids, wrong_ids, history, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO UserProgress (user_id, brushed_ids, memorized_ids, mastered_ids, wrong_ids, favorite_ids, history, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET 
           brushed_ids=excluded.brushed_ids, memorized_ids=excluded.memorized_ids, 
           mastered_ids=excluded.mastered_ids, wrong_ids=excluded.wrong_ids, 
-          history=excluded.history, updated_at=excluded.updated_at
+          favorite_ids=excluded.favorite_ids, history=excluded.history, updated_at=excluded.updated_at
       `).bind(
           user.id,
           JSON.stringify(progress.brushedIds || []),
           JSON.stringify(progress.memorizedIds || []),
           JSON.stringify(progress.masteredIds || []),
           JSON.stringify(progress.wrongIds || []),
+          JSON.stringify(progress.favoriteIds || []),
           JSON.stringify(progress.history || []),
           now
       ));
@@ -379,6 +380,7 @@ app.post('/api/login', async (c) => {
         memorizedIds: JSON.parse(progress.memorized_ids || '[]'),
         masteredIds: JSON.parse(progress.mastered_ids || '[]'),
         wrongIds: JSON.parse(progress.wrong_ids || '[]'),
+        favoriteIds: JSON.parse(progress.favorite_ids || '[]'),
         history: JSON.parse(progress.history || '[]')
       } : null
     });
@@ -744,6 +746,7 @@ app.get('/api/userProgress', async (c) => {
       memorizedIds: JSON.parse(res.memorized_ids || '[]'),
       masteredIds: JSON.parse(res.mastered_ids || '[]'),
       wrongIds: JSON.parse(res.wrong_ids || '[]'),
+      favoriteIds: JSON.parse(res.favorite_ids || '[]'),
       history: JSON.parse(res.history || '[]')
     }
   });
@@ -753,10 +756,10 @@ app.post('/api/secureSync', async (c) => {
   const user = c.get('user');
   const d = await c.req.json();
   await c.env.DB.prepare(`
-    INSERT INTO UserProgress (user_id, brushed_ids, memorized_ids, mastered_ids, wrong_ids, history, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET brushed_ids=excluded.brushed_ids, memorized_ids=excluded.memorized_ids, mastered_ids=excluded.mastered_ids, wrong_ids=excluded.wrong_ids, history=excluded.history, updated_at=excluded.updated_at
-  `).bind(user.id, JSON.stringify(d.brushedIds||[]), JSON.stringify(d.memorizedIds||[]), JSON.stringify(d.masteredIds||[]), JSON.stringify(d.wrongIds||[]), JSON.stringify(d.history||[]), new Date().toISOString()).run();
+    INSERT INTO UserProgress (user_id, brushed_ids, memorized_ids, mastered_ids, wrong_ids, favorite_ids, history, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET brushed_ids=excluded.brushed_ids, memorized_ids=excluded.memorized_ids, mastered_ids=excluded.mastered_ids, wrong_ids=excluded.wrong_ids, favorite_ids=excluded.favorite_ids, history=excluded.history, updated_at=excluded.updated_at
+  `).bind(user.id, JSON.stringify(d.brushedIds||[]), JSON.stringify(d.memorizedIds||[]), JSON.stringify(d.masteredIds||[]), JSON.stringify(d.wrongIds||[]), JSON.stringify(d.favoriteIds||[]), JSON.stringify(d.history||[]), new Date().toISOString()).run();
   return c.json({ success: true });
 });
 

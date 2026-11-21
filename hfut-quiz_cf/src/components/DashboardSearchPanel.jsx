@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react';
+import { Search, Star } from 'lucide-react';
 import { getQuestionTypeLabel } from '../utils/questionType';
 
 export function DashboardSearchPanel({
@@ -16,6 +16,7 @@ export function DashboardSearchPanel({
   setShowSearchResults,
   openSearchQuestion,
   setIsSearchOpen,
+  favoriteIds,
 }) {
   if (!open) return null;
 
@@ -33,9 +34,10 @@ export function DashboardSearchPanel({
       <div className="flex flex-wrap gap-3 items-center mt-3 md:mt-4">
         <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400"><input type="checkbox" checked={searchFilters.includeAnswered} onChange={(e) => setSearchFilters({ ...searchFilters, includeAnswered: e.target.checked })} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />已作答</label>
         <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400"><input type="checkbox" checked={searchFilters.includeUnanswered} onChange={(e) => setSearchFilters({ ...searchFilters, includeUnanswered: e.target.checked })} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />未作答</label>
+        <label className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 font-medium"><input type="checkbox" checked={!!searchFilters.onlyFavorites} onChange={(e) => setSearchFilters({ ...searchFilters, onlyFavorites: e.target.checked })} className="rounded border-slate-300 text-amber-500 focus:ring-amber-500" />仅收藏</label>
         <div className="ml-auto flex gap-2"><button onClick={() => performSearch()} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold flex items-center gap-2"><Search size={16} /> 搜索</button><button onClick={() => { setSearchResults([]); setShowSearchResults(false); setSearchKeyword(''); }} className="px-3 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-700">清空</button></div>
       </div>
-      {showSearchResults && <div className="mt-4 space-y-2 max-h-80 overflow-y-auto">{searchResults.length === 0 ? <p className="text-sm text-slate-500 dark:text-slate-400">暂无结果</p> : searchResults.map((res, idx) => <button key={idx} onClick={() => openSearchQuestion(idx)} className="w-full text-left p-3 rounded-xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/20 transition flex flex-col gap-1 group"><div className="text-slate-800 dark:text-slate-100 font-semibold group-hover:text-blue-600 dark:group-hover:text-blue-400 transition">{res.question}</div><div className="flex items-center justify-between"><span className="text-[12px] text-slate-500 dark:text-slate-400">{res.category} · {getQuestionTypeLabel(res.type)}</span><span className="text-blue-600 dark:text-blue-400 text-xs font-medium opacity-0 group-hover:opacity-100 transition">查看详情 →</span></div></button>)}</div>}
+      {showSearchResults && <div className="mt-4 space-y-2 max-h-80 overflow-y-auto">{searchResults.length === 0 ? <p className="text-sm text-slate-500 dark:text-slate-400">暂无结果</p> : searchResults.map((res, idx) => <button key={idx} onClick={() => openSearchQuestion(idx)} className="w-full text-left p-3 rounded-xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/20 transition flex flex-col gap-1 group"><div className="text-slate-800 dark:text-slate-100 font-semibold group-hover:text-blue-600 dark:group-hover:text-blue-400 transition flex items-start justify-between gap-2"><span>{res.question}</span>{favoriteIds?.has(res.id) && <Star size={14} aria-label="已收藏" className="shrink-0 mt-1 fill-amber-400 text-amber-500" />}</div><div className="flex items-center justify-between"><span className="text-[12px] text-slate-500 dark:text-slate-400">{res.category} · {getQuestionTypeLabel(res.type)}</span><span className="text-blue-600 dark:text-blue-400 text-xs font-medium opacity-0 group-hover:opacity-100 transition">查看详情 →</span></div></button>)}</div>}
     </section>
   );
 }

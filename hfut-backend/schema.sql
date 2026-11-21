@@ -54,6 +54,7 @@ CREATE TABLE UserProgress (
                               wrong_ids TEXT,      -- JSON Array
                               mastered_ids TEXT,   -- JSON Array
                               memorized_ids TEXT,  -- JSON Array
+                              favorite_ids TEXT,   -- JSON Array
                               history TEXT,        -- JSON Array (最近历史)
                               patched_v2 INTEGER DEFAULT 0, -- 故障补录标记 (0或1)
                               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

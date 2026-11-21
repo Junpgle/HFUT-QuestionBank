@@ -1,7 +1,7 @@
-import { CheckCircle, XCircle, X, Trophy, Zap } from 'lucide-react';
+import { CheckCircle, XCircle, X, Trophy, Zap, Star } from 'lucide-react';
 import { Markdown } from './Markdown';
 
-export function QuestionDetailModal({ viewingRankQuestion, onClose, renderUserExplanations }) {
+export function QuestionDetailModal({ viewingRankQuestion, onClose, renderUserExplanations, isFavorited, onToggleFavorite }) {
   if (!viewingRankQuestion) return null;
   const { question, options, rawAnswer, explanation, id, rankInfo } = viewingRankQuestion;
   const typeBadgeClass =
@@ -32,9 +32,22 @@ export function QuestionDetailModal({ viewingRankQuestion, onClose, renderUserEx
               <span className="text-xs px-2 py-1 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 rounded font-bold">错误 {rankInfo.errorCount} 次 · 错误率 {rankInfo.errorRate}%</span>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors ml-4">
-            <X size={20} className="text-slate-400" />
-          </button>
+          <div className="flex items-center gap-1 ml-4">
+            {onToggleFavorite && (
+              <button
+                type="button"
+                onClick={onToggleFavorite}
+                aria-pressed={!!isFavorited}
+                aria-label={isFavorited ? '取消收藏此题' : '收藏此题'}
+                className={`p-2 rounded-full transition-colors ${isFavorited ? 'bg-amber-50 text-amber-500 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-400' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-amber-500'}`}
+              >
+                <Star size={20} aria-hidden="true" className={isFavorited ? 'fill-amber-400 text-amber-500 dark:fill-amber-400 dark:text-amber-400' : ''} />
+              </button>
+            )}
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+              <X size={20} className="text-slate-400" />
+            </button>
+          </div>
         </div>
         <div className="p-6">
           <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-6 leading-relaxed">{question}</h3>

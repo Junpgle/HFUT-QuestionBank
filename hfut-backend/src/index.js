@@ -636,10 +636,12 @@ app.get('/api/getWrongQuestionRanking', async (c) => {
 
     if (subject === 'maogai') {
       querySql += " AND question_id LIKE 'MG-%'";
-    } else if (subject === 'innovation') {
-      querySql += " AND question_id NOT LIKE 'MG-%' AND question_id NOT LIKE 'HGD-MG-%'";
     } else if (subject === 'hgdmy-maogai') {
       querySql += " AND question_id LIKE 'HGD-MG-%'";
+    } else if (subject === 'english-culture') {
+      querySql += " AND question_id LIKE 'ENG-CUL-%'";
+    } else if (subject === 'innovation') {
+      querySql += " AND question_id NOT LIKE 'MG-%' AND question_id NOT LIKE 'HGD-MG-%' AND question_id NOT LIKE 'ENG-CUL-%'";
     }
 
     querySql += ' ORDER BY error_count DESC LIMIT ?';

@@ -1,13 +1,6 @@
 /* eslint-disable no-unused-vars, no-undef, react-hooks/exhaustive-deps, no-empty */
 /*
-* version: 4.0.4 (Cloudflare Migration)
-* 1. 迁移至 Cloudflare Workers + D1
-* 2. 优化 API 调用，适配 Hono 后端
-* 3. 数据结构适配 SQL 模式
-* 4. 题库文件托管在 public 目录
-* 5. 新增数据导入和导出功能,可以无缝从原有网站迁移旧有刷题数据
-* 6. 优化api调用次数我真没招了
-* 7. 一直在优化api我真没招了
+* version: 5.2.1 (Cloudflare Migration)
 * */
 import {useState, useEffect, useRef, useMemo} from 'react';
 import {flushSync} from 'react-dom';
@@ -2145,13 +2138,16 @@ function App() {
             setWrongQuestionRanking(cached.data);
             return;
         }
+        setWrongQuestionRanking([]);
         try {
             const result = await api.request(`/getWrongQuestionRanking?limit=${LEADERBOARD_LIMIT}&subject=${subjectId}`);
             if (result && Array.isArray(result.ranking)) {
-                const parsedRanking = result.ranking.map(item => ({
-                    ...item,
-                    questionId: item.questionId
-                }));
+                const parsedRanking = result.ranking
+                    .filter(item => item && getQuestionSubjectId(item.questionId) === subjectId)
+                    .map(item => ({
+                        ...item,
+                        questionId: item.questionId
+                    }));
                 rankingCacheRef.current[subjectId] = { ts: Date.now(), data: parsedRanking };
                 setWrongQuestionRanking(parsedRanking);
             }
@@ -3378,7 +3374,7 @@ function App() {
     // --- 排行榜页面 ---
     const renderRankingPage = () => (
         <RankingPage
-            wrongQuestionRanking={wrongQuestionRanking}
+            wrongQuestionRanking={wrongQuestionRanking.filter(item => item && getQuestionSubjectId(item.questionId) === selectedSubject)}
             onBack={() => runTransition(() => setCurrentMode('dashboard'))}
             onRefresh={() => {
                 setWrongQuestionRanking([]);

@@ -2,9 +2,6 @@ import { useState, useRef } from 'react';
 import {
     UploadCloud, X, FileUp, AlertCircle, Loader2
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
-import * as mammoth from 'mammoth/mammoth.browser';
-import JSZip from 'jszip';
 
 const parseOldFormatData = (rows, subjectId) => {
     const cleanRows = rows.filter(r => r && r.length > 0);
@@ -489,6 +486,7 @@ const parseCustomExcel = (rawData, subjectId) => {
 
 const extractDocxRawTextFallback = async (arrayBuffer) => {
     try {
+        const { default: JSZip } = await import('jszip');
         const zip = await JSZip.loadAsync(arrayBuffer);
         const candidates = [
             'word/document.xml',
@@ -784,14 +782,20 @@ export default function CustomUploadModal({ show, onClose, onUploadComplete, exi
             return parseCustomJson(jsonData, subjectId);
         }
         if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-            const buf = await targetFile.arrayBuffer();
+            const [buf, XLSX] = await Promise.all([
+                targetFile.arrayBuffer(),
+                import('xlsx'),
+            ]);
             const wb = XLSX.read(buf, { type: 'array' });
             const ws = wb.Sheets[wb.SheetNames[0]];
             const raw = XLSX.utils.sheet_to_json(ws, { header: 1 });
             return parseCustomExcel(raw, subjectId);
         }
         if (fileName.endsWith('.docx')) {
-            const buf = await targetFile.arrayBuffer();
+            const [buf, mammoth] = await Promise.all([
+                targetFile.arrayBuffer(),
+                import('mammoth/mammoth.browser'),
+            ]);
             const result = await mammoth.extractRawText({ arrayBuffer: buf });
             let docText = String(result?.value || '').trim();
             if (!docText) {

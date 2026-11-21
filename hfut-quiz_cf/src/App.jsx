@@ -12,7 +12,6 @@
 import {useState, useEffect, useRef, useMemo} from 'react';
 import {flushSync} from 'react-dom';
 import {api} from './api'; //
-import * as XLSX from 'xlsx';
 import localforage from 'localforage';
 import {
     BookOpen, CheckCircle, Brain, Settings,
@@ -543,19 +542,21 @@ function App() {
     // --- 数据加载工具 ---
     const MAX_EXCEL_FILE_SIZE = 5 * 1024 * 1024;
     const EXCEL_PARSE_TIMEOUT = 10000;
-    const safeParseXLSX = (data) => {
+    const safeParseXLSX = async (data) => {
+        if (data.byteLength > MAX_EXCEL_FILE_SIZE) {
+            throw new Error(`File too large: ${data.byteLength} bytes (max: ${MAX_EXCEL_FILE_SIZE})`);
+        }
+        const XLSX = await import('xlsx');
         return new Promise((resolve, reject) => {
-            if (data.byteLength > MAX_EXCEL_FILE_SIZE) {
-                reject(new Error(`File too large: ${data.byteLength} bytes (max: ${MAX_EXCEL_FILE_SIZE})`));
-                return;
-            }
             const timeoutId = setTimeout(() => {
                 reject(new Error('Excel parsing timeout - possible ReDoS attack'));
             }, EXCEL_PARSE_TIMEOUT);
             try {
                 const workbook = XLSX.read(data, {type: 'array'});
+                const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                const rawData = XLSX.utils.sheet_to_json(worksheet, {header: 1});
                 clearTimeout(timeoutId);
-                resolve(workbook);
+                resolve(rawData);
             } catch (error) {
                 clearTimeout(timeoutId);
                 reject(error);
@@ -1228,9 +1229,7 @@ function App() {
                 const loadPromises = lectures.map(async (lecture) => {
                     try {
                         const data = await fetchLectureArrayBuffer(lecture);
-                        const workbook = await safeParseXLSX(data);
-                        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-                        const rawData = XLSX.utils.sheet_to_json(worksheet, {header: 1});
+                        const rawData = await safeParseXLSX(data);
                         let parsed = [];
                         if (lecture.id === 99) {
                             parsed = parseOldFormatData(rawData, lecture.id, lecture.name);
@@ -1369,9 +1368,7 @@ function App() {
         const loadPromises = lectures.map(async (lecture) => {
             try {
                 const data = await fetchLectureArrayBuffer(lecture);
-                const workbook = await safeParseXLSX(data);
-                const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-                const rawData = XLSX.utils.sheet_to_json(worksheet, {header: 1});
+                const rawData = await safeParseXLSX(data);
                 let parsed = [];
                 if (lecture.id === 99) {
                     parsed = parseOldFormatData(rawData, lecture.id, lecture.name);

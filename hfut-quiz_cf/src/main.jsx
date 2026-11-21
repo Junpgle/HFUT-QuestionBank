@@ -1,11 +1,31 @@
-import React from 'react'
+import React, { lazy, Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import { createHashRouter, RouterProvider } from 'react-router-dom'
-import App from './App.jsx'
-import Report from './Report.jsx'
-import Introduce from './Introduce.jsx'
-import Register from './Register.jsx'
+import { registerSW } from 'virtual:pwa-register'
 import './index.css'
+
+registerSW({
+  immediate: true,
+  onRegisteredSW(_swUrl, registration) {
+    if (!registration) return
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        registration.update().catch(() => {})
+      }
+    })
+  },
+})
+
+const App = lazy(() => import('./App.jsx'))
+const Report = lazy(() => import('./Report.jsx'))
+const Introduce = lazy(() => import('./Introduce.jsx'))
+const Register = lazy(() => import('./Register.jsx'))
+
+const RouteLoading = () => (
+  <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+    <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+  </div>
+)
 
 const RouteError = () => (
   <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6 text-center space-y-3">
@@ -19,11 +39,15 @@ const RouteError = () => (
   </div>
 );
 
+const withSuspense = (element) => (
+  <Suspense fallback={<RouteLoading />}>{element}</Suspense>
+)
+
 const router = createHashRouter([
-  { path: '/', element: <App />, errorElement: <RouteError /> },
-  { path: '/report', element: <Report />, errorElement: <RouteError /> },
-  { path: '/introduce', element: <Introduce />, errorElement: <RouteError /> },
-  { path: '/register', element: <Register />, errorElement: <RouteError /> },
+  { path: '/', element: withSuspense(<App />), errorElement: <RouteError /> },
+  { path: '/report', element: withSuspense(<Report />), errorElement: <RouteError /> },
+  { path: '/introduce', element: withSuspense(<Introduce />), errorElement: <RouteError /> },
+  { path: '/register', element: withSuspense(<Register />), errorElement: <RouteError /> },
   { path: '*', element: <RouteError /> },
 ])
 

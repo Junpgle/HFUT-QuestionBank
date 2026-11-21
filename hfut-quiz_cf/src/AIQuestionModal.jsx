@@ -2,7 +2,6 @@ import { useRef, useState } from 'react';
 import { AlertCircle, Copy, FileUp, Loader2, UploadCloud, Wand2, X } from 'lucide-react';
 import { parseCustomJson } from './CustomUploadModal.jsx';
 import { loadApiSettings } from './ApiSettingsModal.jsx';
-import * as mammoth from 'mammoth/mammoth.browser';
 
 const extractJsonFromText = (text) => {
     const source = String(text || '').trim();
@@ -81,7 +80,10 @@ ${materialText || '（无资料，请基于创新创业基础常见知识点生�
             const fileName = String(file.name || '').toLowerCase();
             let text = '';
             if (fileName.endsWith('.docx')) {
-                const arrayBuffer = await file.arrayBuffer();
+                const [arrayBuffer, mammoth] = await Promise.all([
+                    file.arrayBuffer(),
+                    import('mammoth/mammoth.browser'),
+                ]);
                 const result = await mammoth.extractRawText({ arrayBuffer });
                 text = String(result?.value || '').trim();
                 if (!text) throw new Error('DOCX 未提取到有效文本');

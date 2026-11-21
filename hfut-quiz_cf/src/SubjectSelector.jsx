@@ -1,11 +1,12 @@
-import { useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { BookOpen, Brain, ChevronLeft, ChevronRight, DownloadCloud, FileDown, FileUp, Github, GraduationCap, Info, Loader2, Maximize, Minimize, Settings, Trash2, UploadCloud, User, Wand2 } from 'lucide-react';
-import CustomUploadModal from './CustomUploadModal.jsx';
-import AIQuestionModal from './AIQuestionModal.jsx';
-import ApiSettingsModal from './ApiSettingsModal.jsx';
 import mottos from './data/mottos.json';
 import { formatDate } from './utils/date';
+
+const CustomUploadModal = lazy(() => import('./CustomUploadModal.jsx'));
+const AIQuestionModal = lazy(() => import('./AIQuestionModal.jsx'));
+const ApiSettingsModal = lazy(() => import('./ApiSettingsModal.jsx'));
 
 export const SubjectSelector = ({ 
     allSubjects, 
@@ -529,40 +530,52 @@ export const SubjectSelector = ({
                     </a>
                 </div>
             </div>
-            <CustomUploadModal
-                show={showUploadModal}
-                existingCategories={categories}
-                onClose={() => closeModalTo(() => setShowUploadModal(false))}
-                onUploadComplete={(newSubject, bankData) => {
-                    const updated = [...customSubjects, newSubject];
-                    setCustomSubjects(updated);
-                    safeSet('custom_subjects_list', updated);
-                    safeSet(getBankCacheKey(newSubject.id), bankData);
-                    runLocalTransition(() => {
-                        setShowUploadModal(false);
-                        setSelectedSubject(newSubject.id);
-                    });
-                }}
-            />
-            <AIQuestionModal
-                show={showAiModal}
-                existingCategories={categories}
-                onClose={() => closeModalTo(() => setShowAiModal(false))}
-                onUploadComplete={(newSubject, bankData) => {
-                    const updated = [...customSubjects, newSubject];
-                    setCustomSubjects(updated);
-                    safeSet('custom_subjects_list', updated);
-                    safeSet(getBankCacheKey(newSubject.id), bankData);
-                    runLocalTransition(() => {
-                        setShowAiModal(false);
-                        setSelectedSubject(newSubject.id);
-                    });
-                }}
-            />
-            <ApiSettingsModal
-                show={showApiSettingsModal}
-                onClose={() => closeModalTo(() => setShowApiSettingsModal(false))}
-            />
+            {showUploadModal && (
+                <Suspense fallback={null}>
+                    <CustomUploadModal
+                        show={showUploadModal}
+                        existingCategories={categories}
+                        onClose={() => closeModalTo(() => setShowUploadModal(false))}
+                        onUploadComplete={(newSubject, bankData) => {
+                            const updated = [...customSubjects, newSubject];
+                            setCustomSubjects(updated);
+                            safeSet('custom_subjects_list', updated);
+                            safeSet(getBankCacheKey(newSubject.id), bankData);
+                            runLocalTransition(() => {
+                                setShowUploadModal(false);
+                                setSelectedSubject(newSubject.id);
+                            });
+                        }}
+                    />
+                </Suspense>
+            )}
+            {showAiModal && (
+                <Suspense fallback={null}>
+                    <AIQuestionModal
+                        show={showAiModal}
+                        existingCategories={categories}
+                        onClose={() => closeModalTo(() => setShowAiModal(false))}
+                        onUploadComplete={(newSubject, bankData) => {
+                            const updated = [...customSubjects, newSubject];
+                            setCustomSubjects(updated);
+                            safeSet('custom_subjects_list', updated);
+                            safeSet(getBankCacheKey(newSubject.id), bankData);
+                            runLocalTransition(() => {
+                                setShowAiModal(false);
+                                setSelectedSubject(newSubject.id);
+                            });
+                        }}
+                    />
+                </Suspense>
+            )}
+            {showApiSettingsModal && (
+                <Suspense fallback={null}>
+                    <ApiSettingsModal
+                        show={showApiSettingsModal}
+                        onClose={() => closeModalTo(() => setShowApiSettingsModal(false))}
+                    />
+                </Suspense>
+            )}
             <EditSubjectModal
                 key={editingSubject?.id || 'none'}
                 show={editingSubject !== null}

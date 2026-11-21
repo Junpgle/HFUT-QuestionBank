@@ -10,6 +10,8 @@ import {
   Zap, AlertCircle, Eye, X, MessageCircle, RefreshCw, Sun, Moon, Monitor
 } from 'lucide-react';
 import './index.css';
+import { parseEnglishCultureJson } from './maogaiParser';
+import { ENGLISH_CULTURE_CHAPTERS } from './constants';
 import {
   getThemeMode,
   applyTheme,
@@ -44,7 +46,8 @@ const MAOGAI_CHAPTERS = [
 const SUBJECTS = [
   { id: 'innovation', name: '创新创业', icon: '🚀' },
   { id: 'maogai', name: '毛概', icon: '📖' },
-  { id: 'hgdmy-maogai', name: '马院毛概', icon: '📖' }
+  { id: 'hgdmy-maogai', name: '马院毛概', icon: '📖' },
+  { id: 'english-culture', name: '英语国家社会与文化', icon: '🌍' }
 ];
 
 const safeText = (v) => typeof v === 'string' ? v : (v ? String(v) : '');
@@ -319,6 +322,7 @@ function Report() {
   const [innovationBank, setInnovationBank] = useState({});
   const [maogaiBank, setMaogaiBank] = useState({});
   const [hgdmyMaogaiBank, setHgdmyMaogaiBank] = useState({});
+  const [englishCultureBank, setEnglishCultureBank] = useState({});
   
   const [selectedDate, setSelectedDate] = useState(null);
   const [viewingQuestion, setViewingQuestion] = useState(null);
@@ -409,6 +413,22 @@ function Report() {
         }
       } catch (e) { console.warn('Hgdmy maogai bank load error', e); }
 
+      // 3.6 加载英语国家社会与文化题库
+      try {
+        const cachedE = await localforage.getItem('hf_question_bank_english-culture');
+        if (cachedE && Object.keys(cachedE).length > 0) {
+          setEnglishCultureBank(cachedE);
+        } else {
+          const res = await fetch('/english-culture.json');
+          if (res.ok) {
+            const rawJson = await res.json();
+            const parsed = parseEnglishCultureJson(rawJson);
+            setEnglishCultureBank(parsed);
+            await localforage.setItem('hf_question_bank_english-culture', parsed);
+          }
+        }
+      } catch (e) { console.warn('English culture bank load error', e); }
+
       // 3.8 加载自定义学科列表与本地自定义题库
       try {
         const cSubs = await localforage.getItem('custom_subjects_list') || [];
@@ -492,13 +512,15 @@ function Report() {
       const qid = h.questionId || '';
       const isMaogai = qid.startsWith('MG-');
       const isHgdmy = qid.startsWith('HGD-MG-') || qid.startsWith('HGD-MG');
+      const isEnglishCulture = qid.startsWith('ENG-CUL-');
       const isCustom = qid.startsWith('custom_');
       if (selectedSubject && selectedSubject.startsWith('custom_')) {
         return qid.startsWith(selectedSubject);
       }
       if (selectedSubject === 'maogai') return isMaogai && !isHgdmy;
       if (selectedSubject === 'hgdmy-maogai') return isHgdmy;
-      return !isMaogai && !isHgdmy && !isCustom;
+      if (selectedSubject === 'english-culture') return isEnglishCulture;
+      return !isMaogai && !isHgdmy && !isEnglishCulture && !isCustom;
     });
   }, [mergedHistory, selectedSubject]);
 
@@ -506,13 +528,15 @@ function Report() {
     return new Set([...normalizedBrushed].filter(id => {
       const isMaogai = id.startsWith('MG-');
       const isHgdmy = id.startsWith('HGD-MG-') || id.startsWith('HGD-MG');
+      const isEnglishCulture = id.startsWith('ENG-CUL-');
       const isCustom = id.startsWith('custom_');
       if (selectedSubject && selectedSubject.startsWith('custom_')) {
         return id.startsWith(selectedSubject);
       }
       if (selectedSubject === 'maogai') return isMaogai && !isHgdmy;
       if (selectedSubject === 'hgdmy-maogai') return isHgdmy;
-      return !isMaogai && !isHgdmy && !isCustom;
+      if (selectedSubject === 'english-culture') return isEnglishCulture;
+      return !isMaogai && !isHgdmy && !isEnglishCulture && !isCustom;
     }));
   }, [normalizedBrushed, selectedSubject]);
 
@@ -569,6 +593,11 @@ function Report() {
             if (q) return q;
           }
         }
+      }
+    } else if (normalizedQid.startsWith('ENG-CUL-')) {
+      for (const chId in englishCultureBank) {
+        const q = englishCultureBank[chId]?.find(i => i.id === normalizedQid);
+        if (q) return q;
       }
     } else if (normalizedQid.startsWith('HGD-MG-') || normalizedQid.startsWith('HGD-MG')) {
       for (const chId in hgdmyMaogaiBank) {
@@ -856,11 +885,11 @@ function Report() {
 
   const activeBank = selectedSubject && selectedSubject.startsWith('custom_')
     ? (customBanks[selectedSubject] || {})
-    : (selectedSubject === 'maogai' ? maogaiBank : selectedSubject === 'hgdmy-maogai' ? hgdmyMaogaiBank : innovationBank);
+    : (selectedSubject === 'maogai' ? maogaiBank : selectedSubject === 'hgdmy-maogai' ? hgdmyMaogaiBank : selectedSubject === 'english-culture' ? englishCultureBank : innovationBank);
 
   const activeChapters = selectedSubject && selectedSubject.startsWith('custom_')
     ? (currentSubjectObj?.lectures || [])
-    : (selectedSubject === 'maogai' ? MAOGAI_CHAPTERS : selectedSubject === 'hgdmy-maogai' ? [{ id: 1, name: '全部题目' }] : LECTURES);
+    : (selectedSubject === 'maogai' ? MAOGAI_CHAPTERS : selectedSubject === 'hgdmy-maogai' ? [{ id: 1, name: '全部题目' }] : selectedSubject === 'english-culture' ? ENGLISH_CULTURE_CHAPTERS : LECTURES);
 
   const nextModeMap = {
     'system': 'light',
@@ -969,7 +998,7 @@ function Report() {
                   const qDetails = getQuestionDetails(id);
                   return qDetails && qDetails.category === l.name;
                 }
-                if (selectedSubject === 'maogai') {
+                if (selectedSubject === 'maogai' || selectedSubject === 'english-culture') {
                   const qDetails = getQuestionDetails(id);
                   return qDetails && qDetails.category === l.name;
                 } else if (selectedSubject === 'hgdmy-maogai') {

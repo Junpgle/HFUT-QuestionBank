@@ -21,6 +21,7 @@ import {
     Bookmark, Eye, TrendingUp, ThumbsUp, X
 } from 'lucide-react';
 import {validateContent} from './contentFilter.js';
+import {parseEnglishCultureJson} from './maogaiParser';
 import {Markdown} from './components/Markdown';
 import {LoginScreen} from './components/LoginScreen';
 import {QuestionDetailModal} from './components/QuestionDetailModal';
@@ -66,6 +67,7 @@ const getQuestionSubjectId = (questionId) => {
         const idx = qid.lastIndexOf('-Q');
         return idx > 0 ? qid.slice(0, idx) : null;
     }
+    if (qid.startsWith('ENG-CUL-')) return 'english-culture';
     if (qid.startsWith('HGD-MG-')) return 'hgdmy-maogai';
     if (qid.startsWith('MG-')) return 'maogai';
     if (/^(OLD-|L\d+-)/.test(qid)) return 'innovation';
@@ -115,6 +117,7 @@ function App() {
             if (s.id === 'innovation') totalCount = 1575;
             else if (s.id === 'maogai') totalCount = 1084;
             else if (s.id === 'hgdmy-maogai') totalCount = 583;
+            else if (s.id === 'english-culture') totalCount = 169;
             else {
                 totalCount = s.questionCount || customSubjectCounts[s.id] || 0;
             }
@@ -1166,6 +1169,32 @@ function App() {
                     }
                     return;
                 }
+                if (subject.id === 'english-culture') {
+                    setBankProgress('正在加载英语国家社会与文化题库...');
+                    try {
+                        const url = '/english-culture.json';
+                        const res = await fetch(url);
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        const rawJson = await res.json();
+                        const parsed = parseEnglishCultureJson(rawJson);
+                        if (Object.keys(parsed).length > 0) {
+                            setAllQuestionBank(parsed);
+                            setBankStatus('ready');
+                            await safeSet(cacheKey, parsed);
+                            await safeSet(cacheVerKey, BANK_CACHE_VERSION);
+                            setBankProgress('题库已就绪');
+                            setBankPercent(100);
+                        } else {
+                            throw new Error('解析结果为空');
+                        }
+                    } catch (error) {
+                        console.warn('英语国家社会与文化题库加载失败', error);
+                        setBankStatus('error');
+                        setErrorMsg("英语国家社会与文化题库加载失败: " + error.message);
+                        setBankPercent(0);
+                    }
+                    return;
+                }
                 const lectures = subject.lectures || LECTURES;
                 const total = lectures.length;
                 const newBank = {};
@@ -1279,6 +1308,30 @@ function App() {
                 console.warn('马院毛概题库强制更新失败', error);
                 setBankStatus('error');
                 setErrorMsg("马院毛概题库强制更新失败: " + error.message);
+                setBankPercent(0);
+                return;
+            }
+        }
+        if (subject.id === 'english-culture') {
+            try {
+                const url = '/english-culture.json';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const rawJson = await res.json();
+                const parsed = parseEnglishCultureJson(rawJson);
+                if (Object.keys(parsed).length > 0) {
+                    setAllQuestionBank(parsed);
+                    setBankStatus('ready');
+                    await safeSet(cacheKey, parsed);
+                    await safeSet(cacheVerKey, BANK_CACHE_VERSION);
+                    setBankProgress('题库已更新');
+                    setBankPercent(100);
+                    return;
+                }
+            } catch (error) {
+                console.warn('英语国家社会与文化题库强制更新失败', error);
+                setBankStatus('error');
+                setErrorMsg("英语国家社会与文化题库强制更新失败: " + error.message);
                 setBankPercent(0);
                 return;
             }
@@ -2409,22 +2462,22 @@ function App() {
         const list = questionThread[questionId]?.explanations;
         if (!list || list.length === 0) return null;
         return (
-            <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-2">
-                <p className="text-xs font-semibold text-slate-600 flex items-center gap-2">
+            <div className="mt-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-3 space-y-2">
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-2">
                     <BookOpen size={14}/> 用户提供的解析
                 </p>
                 {list.map((exp) => {
                     const isOwner = exp.authorId === currentUser?.id;
                     const isEditing = editingExplanationId === exp.id;
                     return (
-                        <div key={exp.id} className="p-2 rounded-lg bg-white border border-slate-100 space-y-2">
-                            <div className="text-xs text-slate-500 flex justify-between items-center">
+                        <div key={exp.id} className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 space-y-2">
+                            <div className="text-xs text-slate-500 dark:text-slate-400 flex justify-between items-center">
                                 <span>{exp.author} · {formatDate(exp.createdAt)}</span>
                                 {isOwner && !isEditing && (
                                     <button onClick={() => {
                                         setEditingExplanationId(exp.id);
                                         setEditingExplanationContent(exp.content);
-                                    }} className="text-blue-600 text-xs">编辑</button>
+                                    }} className="text-blue-600 dark:text-blue-400 text-xs">编辑</button>
                                 )}
                             </div>
                             {isEditing ? (
@@ -2432,7 +2485,7 @@ function App() {
                                 <textarea
                                     value={editingExplanationContent}
                                     onChange={(e) => setEditingExplanationContent(e.target.value)}
-                                    className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                    className="w-full p-2 border border-slate-200 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                                     rows={4}
                                 />
                                     <div className="flex gap-2 justify-end text-xs">
@@ -2442,7 +2495,7 @@ function App() {
                                         <button onClick={() => {
                                             setEditingExplanationId(null);
                                             setEditingExplanationContent('');
-                                        }} className="px-3 py-1 bg-slate-200 text-slate-700 rounded-lg">取消
+                                        }} className="px-3 py-1 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg">取消
                                         </button>
                                     </div>
                                 </div>

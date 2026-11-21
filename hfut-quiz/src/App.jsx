@@ -1223,7 +1223,10 @@ function App() {
         if (quizConfig.type !== 'all') {
             sourcePool = sourcePool.filter(q => q.type === quizConfig.type);
         }
-        if (quizConfig.filter === 'new') sourcePool = sourcePool.filter(q => !brushedIds.has(q.id));
+        if (quizConfig.filter === 'new') {
+            const doneIds = mode === 'memorize' ? memorizedIds : brushedIds;
+            sourcePool = sourcePool.filter(q => !doneIds.has(q.id));
+        }
         else if (quizConfig.filter === 'wrong') sourcePool = sourcePool.filter(q => wrongIds.has(q.id));
 
         if (sourcePool.length === 0) {

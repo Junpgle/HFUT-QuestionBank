@@ -368,13 +368,16 @@ function App() {
         }
     };
     // ==========================================
-    // 🚀 优化逻辑 2: 聚合同步 (心跳 + 进度)
+    // 🚀 优化逻辑 2: 聚合同步 (心跳 + 进度，仅在数据有变更且页面可见时触发)
     // ==========================================
+    const progressDirtyRef = useRef(false);
+    const hasInitialSyncRef = useRef(false);
     const performGlobalSync = async (includeProgress = false) => {
-        if (!currentUser) return;
+        if (!currentUser || !hydrated || apiLimitReached) return;
+        const shouldSendProgress = includeProgress && progressDirtyRef.current;
         const payload = {
             heartbeat: true,
-            progress: includeProgress ? {
+            progress: shouldSendProgress ? {
                 brushedIds: Array.from(brushedIds).filter(id => id && !id.startsWith('custom_')),
                 memorizedIds: Array.from(memorizedIds).filter(id => id && !id.startsWith('custom_')),
                 masteredIds: Array.from(masteredIds).filter(id => id && !id.startsWith('custom_')),
@@ -384,21 +387,22 @@ function App() {
             } : null
         };
         try {
-            if (includeProgress) {
+            if (shouldSendProgress) {
                 setSyncStatus('uploading');
                 setSyncMsg("同步中...");
             }
             const res = await api.request('/sync-all', 'POST', payload);
             if (res.success) {
                 if (res.onlineCount) setOnlineCount(res.onlineCount);
-                if (includeProgress) {
+                if (shouldSendProgress) {
+                    progressDirtyRef.current = false;
                     setSyncStatus('success');
                     setSyncMsg("备份成功");
                 }
             }
         } catch (e) {
             console.error("同步失败", e);
-            if (includeProgress) {
+            if (shouldSendProgress) {
                 setSyncStatus('error');
                 setSyncMsg("同步失败");
             }
@@ -423,29 +427,54 @@ function App() {
     }, []); // ⚠️ 仅执行一次，手动切换时 setThemeMode 会直接调用 applyTheme
 
     useEffect(() => {
-        if (!currentUser) return;
-        // 1. 进入页面（或登录成功）立即执行一次，获取初始在线人数和进度
-        performGlobalSync(true);
-        // 2. 开启 5 分钟一次的定时心跳
-        const timer = setInterval(() => performGlobalSync(true), 5 * 60 * 1000);
+        if (hydrated) progressDirtyRef.current = true;
+    }, [brushedIds, memorizedIds, masteredIds, wrongIds, favoriteIds, history]);
+
+    useEffect(() => {
+        if (!currentUser || !hydrated) return;
+        // 1. 首次水合完成时仅发送一次轻量心跳获取在线人数（避免未变更时重复上传全量进度）
+        if (!hasInitialSyncRef.current) {
+            hasInitialSyncRef.current = true;
+            performGlobalSync(false);
+        }
+        // 2. 开启 10 分钟一次的定时心跳/同步（后台标签页跳过，有未同步进度时才附带上传）
+        const timer = setInterval(() => {
+            if (typeof document !== 'undefined' && document.hidden) return;
+            performGlobalSync(true);
+        }, 10 * 60 * 1000);
         return () => clearInterval(timer);
-        // 💡 只依赖 currentUser。即使 brushedIds 变了，定时器也不会重启
-    }, [currentUser]);
+    }, [currentUser, hydrated]);
     // ==========================================
-    // 🚀 优化逻辑 3: 聚合加载互动内容
+    // 🚀 优化逻辑 3: 聚合加载互动内容 (带 sessionStorage 缓存)
     // ==========================================
     const isCustomQuestionId = (questionId) => String(questionId || '').startsWith('custom_');
     const loadQuestionThread = async (questionId) => {
         if (!questionId || !currentUser || isCustomQuestionId(questionId)) return;
+        if (questionThread[questionId]) return;
+        const cacheKey = `thread_cache_${questionId}`;
+        try {
+            const cachedRaw = sessionStorage.getItem(cacheKey);
+            if (cachedRaw) {
+                const cached = JSON.parse(cachedRaw);
+                if (cached && Date.now() - cached.ts < 15 * 60 * 1000 && cached.data) {
+                    setQuestionThread(prev => ({ ...prev, [questionId]: cached.data }));
+                    return;
+                }
+            }
+        } catch {}
         try {
             const res = await api.request(`/thread/${questionId}`);
             const safeRes = (res && typeof res === 'object') ? res : {};
+            const threadData = {
+                comments: Array.isArray(safeRes.comments) ? safeRes.comments : [],
+                explanations: Array.isArray(safeRes.explanations) ? safeRes.explanations : []
+            };
+            try {
+                sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: threadData }));
+            } catch {}
             setQuestionThread(prev => ({
                 ...prev,
-                [questionId]: {
-                    comments: Array.isArray(safeRes.comments) ? safeRes.comments : [],
-                    explanations: Array.isArray(safeRes.explanations) ? safeRes.explanations : []
-                }
+                [questionId]: threadData
             }));
         } catch (e) {
             console.error("加载互动内容失败", e);
@@ -459,13 +488,6 @@ function App() {
             }));
         }
     };
-    useEffect(() => {
-        if (!currentUser || !questions.length) return;
-        const q = questions[currentIndex];
-        if (q && !isCustomQuestionId(q.id) && !questionThread[q.id]) {
-            loadQuestionThread(q.id);
-        }
-    }, [currentIndex, questions, currentUser]);
     // ✅ 改动：使用 api.batchRecord
     const flushStats = async () => {
         const payload = [...statsBuffer.current];
@@ -855,9 +877,12 @@ function App() {
         const checkVersion = async () => {
             if (!currentUser || apiLimitReached) return;
             try {
+                const lastChecked = Number(localStorage.getItem('app_version_checked_at') || 0);
+                if (Date.now() - lastChecked < 6 * 60 * 60 * 1000) return;
                 // 假设后端接口返回格式: { success: true, version: "4.0.3", changelog: "..." }
                 // 或者直接存放在 SystemConfig 表中
                 const res = await api.request('/SystemConfig?key=app_version');
+                localStorage.setItem('app_version_checked_at', String(Date.now()));
                 if (res && res.success) {
                     const latestVersion = res.version || res.data?.value;
                     const changelog = res.changelog || res.data?.changelog || '修复了一些已知问题并提升了稳定性。';
@@ -1033,31 +1058,6 @@ function App() {
             }
         })();
     }, []);
-    // ✅ 改动：自动补录 (Cloudflare 版)
-    useEffect(() => {
-        const tryAutoRecovery = async () => {
-            if (!hydrated || !currentUser || apiLimitReached) return;
-            // ⚠️ Cloudflare 模式下 id 直接在 currentUser 对象中
-            const localPatchedKey = `patched_20260117_v2_${currentUser.id}`;
-            if (localStorage.getItem(localPatchedKey) === 'true') {
-                return;
-            }
-            try {
-                // 调用后端补录接口
-                const res = await api.request('/recoverOutageStats', 'POST', {
-                    history: history
-                });
-                if (res && res.success) {
-                    localStorage.setItem(localPatchedKey, 'true');
-                    console.log('数据补录检查完成:', res.msg || res.count);
-                }
-            } catch (e) {
-                console.warn('自动补录请求失败（不影响使用）:', e);
-            }
-        };
-        const timer = setTimeout(tryAutoRecovery, 5000);
-        return () => clearTimeout(timer);
-    }, [hydrated, currentUser, history, apiLimitReached]);
     // 加载题库 (subject-aware)
     useEffect(() => {
         if (!selectedSubject) return;
@@ -1990,7 +1990,10 @@ function App() {
         if (quizConfig.type !== 'all') {
             sourcePool = sourcePool.filter(q => q.type === quizConfig.type);
         }
-        if (quizConfig.filter === 'new') sourcePool = sourcePool.filter(q => !brushedIds.has(q.id));
+        if (quizConfig.filter === 'new') {
+            const doneIds = mode === 'memorize' ? memorizedIds : brushedIds;
+            sourcePool = sourcePool.filter(q => !doneIds.has(q.id));
+        }
         else if (quizConfig.filter === 'wrong') sourcePool = sourcePool.filter(q => wrongIds.has(q.id));
         else if (quizConfig.filter === 'favorite') sourcePool = sourcePool.filter(q => favoriteIds.has(q.id));
         if (sourcePool.length === 0) {
@@ -2133,10 +2136,16 @@ function App() {
         }
         return null;
     };
-    // ✅ 改动：加载排行榜 (仅官方题库可用)
-    const loadWrongQuestionRanking = async (subjectId = selectedSubject) => {
+    // ✅ 改动：加载排行榜 (仅官方题库可用，带 5 分钟缓存)
+    const rankingCacheRef = useRef({});
+    const loadWrongQuestionRanking = async (subjectId = selectedSubject, force = false) => {
         if (!subjectId || subjectId.startsWith('custom_')) {
             setWrongQuestionRanking([]);
+            return;
+        }
+        const cached = rankingCacheRef.current[subjectId];
+        if (!force && cached && Date.now() - cached.ts < 5 * 60 * 1000) {
+            setWrongQuestionRanking(cached.data);
             return;
         }
         try {
@@ -2146,6 +2155,7 @@ function App() {
                     ...item,
                     questionId: item.questionId
                 }));
+                rankingCacheRef.current[subjectId] = { ts: Date.now(), data: parsedRanking };
                 setWrongQuestionRanking(parsedRanking);
             }
         } catch (e) {
@@ -2196,8 +2206,8 @@ function App() {
         if (typeof setViewingRankQuestion === 'function') {
             setViewingRankQuestion(safeQuestion);
         }
-        // 触发数据加载
-        loadThreadData(questionItem.id);
+        // 触发数据加载（使用聚合接口 /thread/:id）
+        loadQuestionThread(questionItem.id);
     };
     // --- 交互逻辑重构 (本地乐观更新) ---
     // 提交评论
@@ -3375,7 +3385,7 @@ function App() {
             onBack={() => runTransition(() => setCurrentMode('dashboard'))}
             onRefresh={() => {
                 setWrongQuestionRanking([]);
-                loadWrongQuestionRanking();
+                loadWrongQuestionRanking(selectedSubject, true);
             }}
             onOpenQuestion={openRankingQuestion}
         />

@@ -2898,6 +2898,7 @@ function App() {
             <DashboardPage
             header={
                 <DashboardHeader
+                    appVersion={CURRENT_APP_VERSION}
                     currentSubject={currentSubject}
                     currentUser={currentUser}
                     syncMsg={syncMsg}
@@ -2906,6 +2907,10 @@ function App() {
                     setThemeMode={setThemeMode}
                     onSwitchSubject={switchSubject}
                     onToggleSearch={() => setIsSearchOpen(!isSearchOpen)}
+                    onForceRefresh={() => {
+                        localStorage.removeItem('app_version_checked_at');
+                        return forceAppReload();
+                    }}
                 />
             }
             searchPanel={

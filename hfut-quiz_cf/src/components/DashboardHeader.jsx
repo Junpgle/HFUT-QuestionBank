@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   AlertCircle,
   CheckCircle,
@@ -7,12 +8,14 @@ import {
   Loader2,
   Monitor,
   Moon,
+  RefreshCw,
   Search,
   Sun,
 } from 'lucide-react';
 
 export function DashboardHeader(props) {
   const {
+    appVersion,
     currentSubject,
     currentUser,
     syncMsg,
@@ -21,7 +24,20 @@ export function DashboardHeader(props) {
     setThemeMode,
     onSwitchSubject,
     onToggleSearch,
+    onForceRefresh,
   } = props;
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleForceRefresh = async () => {
+    if (refreshing || !onForceRefresh) return;
+    setRefreshing(true);
+    try {
+      await onForceRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const nextModeMap = {
     'system': 'light',
@@ -58,11 +74,29 @@ export function DashboardHeader(props) {
           <span>{currentSubject?.shortName || currentSubject?.name || '刷题系统'}</span>
           <button onClick={onSwitchSubject} className="ml-2 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-lg transition-colors dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300">切换</button>
         </h1>
-        <p className="text-slate-500 text-xs md:text-sm font-medium mt-1 pl-8 md:pl-11 dark:text-slate-400">欢迎, {displayName}</p>
+        <div className="flex items-center gap-2 mt-1 pl-8 md:pl-11">
+          <p className="text-slate-500 text-xs md:text-sm font-medium dark:text-slate-400">欢迎, {displayName}</p>
+          {appVersion && (
+            <span className="px-1.5 py-0.5 text-[11px] font-mono font-medium rounded-md bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" title={`当前版本 v${appVersion}`}>
+              v{appVersion}
+            </span>
+          )}
+        </div>
       </div>
       <div className="flex gap-2 md:gap-3 items-center">
         {syncMsg && <div className="px-3 py-2 rounded-xl border text-xs md:text-sm font-semibold flex items-center gap-2 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800" aria-live="polite">{syncStatus === 'success' && <CheckCircle size={14} className="text-green-600" />}{syncStatus === 'error' && <AlertCircle size={14} className="text-red-500" />}{syncStatus === 'uploading' && <Loader2 size={14} className="animate-spin text-blue-500" />}{syncStatus === 'downloading' && <DownloadCloud size={14} className="text-blue-500" />}<span className="text-slate-600 dark:text-slate-300">{syncMsg}</span></div>}
         <button onClick={onToggleSearch} className="p-2 md:p-3 bg-white text-slate-600 rounded-xl shadow-sm hover:shadow-md hover:text-blue-600 transition-all border border-slate-100 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:text-blue-400" title="搜索题目"><Search size={18} className="md:w-5 md:h-5" /></button>
+        {onForceRefresh && (
+          <button
+            onClick={handleForceRefresh}
+            disabled={refreshing}
+            className="p-2 md:p-3 bg-white text-slate-600 rounded-xl shadow-sm hover:shadow-md hover:text-blue-600 transition-all border border-slate-100 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:text-blue-400 disabled:opacity-60"
+            title="强制刷新（清理缓存并重载页面）"
+            aria-label="强制刷新"
+          >
+            <RefreshCw size={18} className={`md:w-5 md:h-5 ${refreshing ? 'animate-spin text-blue-600 dark:text-blue-400' : ''}`} />
+          </button>
+        )}
         {/* 🌗 日夜模式切换按钮 */}
         <button onClick={() => setThemeMode(nextModeMap[themeMode])} className="p-2 md:p-3 bg-white text-slate-600 rounded-xl shadow-sm hover:shadow-md transition-all border border-slate-100 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:text-blue-400" title={getThemeTitle()}>
           {getThemeIcon()}

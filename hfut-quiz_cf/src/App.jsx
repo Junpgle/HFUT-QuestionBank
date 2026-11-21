@@ -43,6 +43,7 @@ import {
 import {formatDate} from './utils/date';
 import {safeGet, safeSet} from './utils/storage';
 import {normalizeSet} from './utils/questionId';
+import {parseFillAnswer, gradeFill} from './utils/fillAnswer';
 import {getSubjectById, getSubjectChapterOptions} from './utils/subjectAdapter';
 import {
     getThemeMode,
@@ -242,6 +243,8 @@ function App() {
     const [showExplanation, setShowExplanation] = useState(false);
     const [selectedIndices, setSelectedIndices] = useState([]);
     const [selectedByQuestion, setSelectedByQuestion] = useState({});
+    const [fillInputs, setFillInputs] = useState([]);
+    const [fillInputsByQuestion, setFillInputsByQuestion] = useState({});
     const [isAnswered, setIsAnswered] = useState(false);
     const [answerResults, setAnswerResults] = useState({});
     // 在线人数统计
@@ -1995,6 +1998,8 @@ function App() {
         setQuestions(shuffled.slice(0, limit));
         setAnswerResults({});
         setSelectedByQuestion({});
+        setFillInputsByQuestion({});
+        setFillInputs([]);
         startMode(mode);
     };
     const resumeLastSession = () => {
@@ -2005,13 +2010,17 @@ function App() {
         startMode(lastSession.mode);
         const restoredAnswers = lastSession.answerResults || {};
         const restoredSelections = lastSession.selectedByQuestion || {};
+        const restoredFillInputs = lastSession.fillInputsByQuestion || {};
         setAnswerResults(restoredAnswers);
         setSelectedByQuestion(restoredSelections);
+        setFillInputsByQuestion(restoredFillInputs);
         const currentQ = lastSession.questions?.[lastSession.currentIndex];
         const currentQid = currentQ?.id;
         const currentSelection = currentQid ? (restoredSelections[currentQid] || []) : [];
+        const currentFillInput = currentQid ? (restoredFillInputs[currentQid] || []) : [];
         const answered = currentQid ? Object.prototype.hasOwnProperty.call(restoredAnswers, currentQid) : false;
         setSelectedIndices(currentSelection);
+        setFillInputs(currentFillInput);
         setIsAnswered(answered);
         setShowExplanation(answered);
     };
@@ -2029,6 +2038,8 @@ function App() {
         setQuestions(wrongQs);
         setAnswerResults({});
         setSelectedByQuestion({});
+        setFillInputsByQuestion({});
+        setFillInputs([]);
         startMode('mistakes');
     };
     const startFavoriteNotebook = () => {
@@ -2045,6 +2056,8 @@ function App() {
         setQuestions(favQs);
         setAnswerResults({});
         setSelectedByQuestion({});
+        setFillInputsByQuestion({});
+        setFillInputs([]);
         startMode('favorites');
     };
     const performSearch = (keyword = searchKeyword) => {
@@ -2100,6 +2113,8 @@ function App() {
         setQuestions([...searchResults]);
         setAnswerResults({});
         setSelectedByQuestion({});
+        setFillInputsByQuestion({});
+        setFillInputs([]);
         startMode('quiz');
         setShowSearchResults(false);
     };
@@ -2645,6 +2660,7 @@ function App() {
         // 如果是背题模式，或者已经作答过了，点击无效
         if (currentMode === 'memorize' || isAnswered) return;
         const currentQ = questions[currentIndex];
+        if (currentQ.type === 'fill' && currentMode !== 'memorize') return;
         // 多选题逻辑：点击只是选中/取消选中，不自动提交
         if (currentQ.type === 'multiple') {
             setSelectedIndices(prev =>
@@ -2677,6 +2693,26 @@ function App() {
         }
         return [];
     };
+    const applyResultStats = (questionId, isCorrect) => {
+        setBrushedIds(prev => new Set(prev).add(questionId));
+        if (isCorrect) {
+            setWrongIds(prev => {
+                const n = new Set(prev);
+                n.delete(questionId);
+                return n;
+            });
+            setMasteredIds(prev => new Set(prev).add(questionId));
+            setAnswerResults(prev => ({...prev, [questionId]: 'correct'}));
+        } else {
+            setMasteredIds(prev => {
+                const n = new Set(prev);
+                n.delete(questionId);
+                return n;
+            });
+            setWrongIds(prev => new Set(prev).add(questionId));
+            setAnswerResults(prev => ({...prev, [questionId]: 'wrong'}));
+        }
+    };
     // ✅ 优化版：提交答案 (移除冗余加载逻辑)
     const submitAnswer = (finalSelection = selectedIndices) => {
         const normalizedSelection = normalizeAnswerIndices(finalSelection);
@@ -2696,24 +2732,7 @@ function App() {
         setSelectedByQuestion(prev => ({...prev, [currentQ.id]: normalizedSelection}));
         setShowExplanation(true); // 💡 这一步会触发我们之前写的 useEffect，自动去加载互动数据
         // 3. 更新统计数据 (本地 Set 操作)
-        setBrushedIds(prev => new Set(prev).add(currentQ.id));
-        if (isCorrect) {
-            setWrongIds(prev => {
-                const n = new Set(prev);
-                n.delete(currentQ.id);
-                return n;
-            });
-            setMasteredIds(prev => new Set(prev).add(currentQ.id));
-            setAnswerResults(prev => ({...prev, [currentQ.id]: 'correct'}));
-        } else {
-            setMasteredIds(prev => {
-                const n = new Set(prev);
-                n.delete(currentQ.id);
-                return n;
-            });
-            setWrongIds(prev => new Set(prev).add(currentQ.id));
-            setAnswerResults(prev => ({...prev, [currentQ.id]: 'wrong'}));
-        }
+        applyResultStats(currentQ.id, isCorrect);
         // 4. 提交到缓冲区 (由 flushStats 批量发送，不会导致 API 爆炸)
         submitQuestionResult(currentQ.id, isCorrect, currentQ.question, currentQ.category, answerText);
         // 5. 记录本地历史
@@ -2724,6 +2743,33 @@ function App() {
             action: 'answer',
             isCorrect,
             userAnswer: answerText,
+            timestamp: new Date().toISOString(),
+        }, ...prev]);
+    };
+    const submitFillAnswer = () => {
+        if (isAnswered) return;
+        const currentQ = questions[currentIndex];
+        if (!currentQ) return;
+        const blanks = parseFillAnswer(currentQ.options?.[0], currentQ.question);
+        const inputs = blanks.map((_, i) => String(fillInputs[i] || '').trim());
+        if (inputs.every(v => !v)) return;
+        const {isCorrect} = gradeFill(inputs, blanks);
+        const answerText = inputs.join('；');
+        setIsAnswered(true);
+        setFillInputs(inputs);
+        setFillInputsByQuestion(prev => ({...prev, [currentQ.id]: inputs}));
+        setSelectedIndices([]);
+        setSelectedByQuestion(prev => ({...prev, [currentQ.id]: []}));
+        setShowExplanation(true);
+        applyResultStats(currentQ.id, isCorrect);
+        submitQuestionResult(currentQ.id, isCorrect, currentQ.question, currentQ.category, answerText.slice(0, 60));
+        setHistory(prev => [{
+            id: Date.now(),
+            questionId: currentQ.id,
+            questionTitle: currentQ.question,
+            action: 'answer',
+            isCorrect,
+            userAnswer: answerText.slice(0, 200),
             timestamp: new Date().toISOString(),
         }, ...prev]);
     };
@@ -2744,6 +2790,8 @@ function App() {
             if (mode !== currentMode) {
                 setSelectedIndices([]);
                 setSelectedByQuestion({});
+                setFillInputsByQuestion({});
+                setFillInputs([]);
                 setIsAnswered(false);
                 setShowExplanation(false);
             }
@@ -2754,9 +2802,11 @@ function App() {
         const q = questions[idx];
         const qid = q?.id;
         const restored = qid ? (selectedByQuestion[qid] || []) : [];
+        const restoredFill = qid ? (fillInputsByQuestion[qid] || []) : [];
         const answered = qid ? Object.prototype.hasOwnProperty.call(answerResults, qid) : false;
         setCurrentIndex(idx);
         setSelectedIndices(restored);
+        setFillInputs(restoredFill);
         setIsAnswered(answered);
         setShowExplanation(answered);
     };
@@ -2780,7 +2830,8 @@ function App() {
                     currentIndex,
                     quizConfig,
                     answerResults,
-                    selectedByQuestion
+                    selectedByQuestion,
+                    fillInputsByQuestion
                 });
             } else {
                 setLastSession(null);
@@ -3256,10 +3307,17 @@ function App() {
                                     isQuiz={isQuiz}
                                     isAnswered={isAnswered}
                                     selectedIndices={selectedIndices}
+                                    fillInputs={fillInputs}
                                     isFavorited={favoriteIds.has(currentQ.id)}
                                     onToggleFavorite={() => toggleFavorite(currentQ.id)}
                                     onOptionClick={handleOptionClick}
                                     onSubmit={submitAnswer}
+                                    onFillInputChange={(i, v) => setFillInputs(prev => {
+                                        const n = [...prev];
+                                        n[i] = v;
+                                        return n;
+                                    })}
+                                    onFillSubmit={submitFillAnswer}
                                 />
                                 <QuizNavControls
                                     currentIndex={currentIndex}

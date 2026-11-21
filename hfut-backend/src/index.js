@@ -211,6 +211,17 @@ app.get('/api/SystemConfig', async (c) => {
   return c.json({ success: true, ...data });
 });
 
+// 把任意用户答案转成可安全用作 JSON 对象键的字符串
+const toStatsKey = (raw) => {
+  const s = String(raw ?? '')
+    .replace(/["\\]/g, '') // SQLite JSON path 的引号标签内不支持转义
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+  return s || 'Unknown';
+};
+
 // 批量提交统计
 app.post('/api/batchRecord', async (c) => {
   try {
@@ -225,15 +236,15 @@ app.post('/api/batchRecord', async (c) => {
                                       total_attempts = total_attempts + 1,
                                       option_stats = CASE
                                       WHEN excluded.error_count > 0 AND ? IS NOT NULL THEN
-                                      json_set(COALESCE(option_stats, '{}'), '$.' || ?, COALESCE(json_extract(option_stats, '$.' || ?), 0) + 1)
+                                      json_set(COALESCE(option_stats, '{}'), '$."' || ? || '"', COALESCE(json_extract(option_stats, '$."' || ? || '"'), 0) + 1)
                                       ELSE option_stats END
     `);
 
     const batch = results.map(item => {
       const isErr = item.isCorrect ? 0 : 1;
-      const ans = item.userAnswer || 'Unknown';
+      const key = toStatsKey(item.userAnswer);
       // 严格绑定 8 个参数
-      return stmt.bind(item.questionId, item.questionTitle, item.category, isErr, ans, ans, ans, ans);
+      return stmt.bind(item.questionId, item.questionTitle, item.category, isErr, key, key, key, key);
     });
 
     await c.env.DB.batch(batch);

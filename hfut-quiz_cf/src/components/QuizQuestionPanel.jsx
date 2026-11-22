@@ -1,7 +1,14 @@
 import { useRef, useState } from 'react';
-import { CheckCircle, CheckSquare, Lightbulb, Star, XCircle } from 'lucide-react';
+import { BookOpen, CheckCircle, CheckSquare, Download, Lightbulb, Loader2, Star, X, XCircle } from 'lucide-react';
 import { getQuestionTypeBadgeClass, getQuestionTypeLabel } from '../utils/questionType';
 import { getFillHint, gradeFill, parseFillAnswer } from '../utils/fillAnswer';
+import {
+  downloadFullOfflineDict,
+  getTranslateEnabled,
+  loadOfflineDict,
+  lookupOfflineText,
+  setTranslateEnabled,
+} from '../utils/offlineDict';
 
 export function QuizQuestionPanel({
   currentQ,
@@ -19,7 +26,12 @@ export function QuizQuestionPanel({
   const inputRefs = useRef([]);
   const questionKey = currentQ?.id ?? currentQ?.question ?? '';
   const [hintState, setHintState] = useState({ key: questionKey, count: 0 });
+  const [lookupState, setLookupState] = useState({ key: questionKey, tokenIndex: null, result: null });
+  const [translateEnabled, setTranslateEnabledState] = useState(() => getTranslateEnabled());
+  const [dictDownloadState, setDictDownloadState] = useState('idle'); // 'idle' | 'downloading' | 'ready' | 'fallback'
   const hintCount = hintState.key === questionKey ? hintState.count : 0;
+  const activeLookup = lookupState.key === questionKey ? lookupState : { key: questionKey, tokenIndex: null, result: null };
+  const hasEnglishStem = /[A-Za-z]{2,}/.test(String(currentQ?.question || ''));
   const isFillQuiz = isQuiz && currentQ.type === 'fill';
   const blanks = isFillQuiz ? parseFillAnswer(currentQ.options?.[0], currentQ.question) : [];
   const hintInfo = isFillQuiz ? getFillHint(blanks, hintCount) : { hints: [], revealedCount: 0, totalChars: 0, hasMore: false };
@@ -27,6 +39,45 @@ export function QuizQuestionPanel({
     ? gradeFill(blanks.map((_, i) => fillInputs[i] || ''), blanks)
     : { isCorrect: false, perBlank: [] };
   const hasAnyFillInput = isFillQuiz && blanks.some((_, i) => String(fillInputs[i] || '').trim().length > 0);
+
+  const handleToggleTranslate = async () => {
+    if (translateEnabled) {
+      setTranslateEnabledState(false);
+      setTranslateEnabled(false);
+      setLookupState({ key: questionKey, tokenIndex: null, result: null });
+      return;
+    }
+    setTranslateEnabledState(true);
+    setTranslateEnabled(true);
+    setDictDownloadState('downloading');
+    try {
+      await downloadFullOfflineDict();
+      setDictDownloadState('ready');
+    } catch {
+      await loadOfflineDict();
+      setDictDownloadState('fallback');
+    }
+  };
+
+  const handleTranslateText = async (rawText, tokenIndex = null) => {
+    if (!translateEnabled) return;
+    const { dict, source } = await loadOfflineDict();
+    if (source === 'full') setDictDownloadState('ready');
+    const result = lookupOfflineText(rawText, dict);
+    if (!result) return;
+    setLookupState({ key: questionKey, tokenIndex, result: { ...result, source } });
+  };
+
+  const handleQuestionMouseUp = () => {
+    if (!translateEnabled) return;
+    const selected = window.getSelection?.()?.toString().trim() || '';
+    if (!selected || !/[A-Za-z]/.test(selected)) return;
+    handleTranslateText(selected, null);
+  };
+
+  const questionSegments = translateEnabled
+    ? String(currentQ?.question || '').split(/([A-Za-z]+(?:'[A-Za-z]+)?)/g)
+    : [];
 
   return (
     <div className="md:col-span-2 bg-white rounded-[1.5rem] md:rounded-[2rem] p-5 md:p-8 shadow-sm border border-slate-200 animate-enter h-full flex flex-col dark:bg-slate-900 dark:border-slate-800">
@@ -37,23 +88,126 @@ export function QuizQuestionPanel({
           </span>
           <span className="text-slate-400 text-xs md:text-sm font-medium flex items-center gap-1 truncate dark:text-slate-500">{currentQ.category}</span>
         </div>
-        {onToggleFavorite && (
-          <button
-            type="button"
-            onClick={onToggleFavorite}
-            aria-pressed={!!isFavorited}
-            aria-label={isFavorited ? '取消收藏此题' : '收藏此题'}
-            className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all
-              ${isFavorited
-                ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/30 dark:border-amber-800/70 dark:text-amber-300 dark:hover:bg-amber-950/50'
-                : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-amber-600 hover:border-amber-200 hover:bg-amber-50/60 dark:bg-slate-800/70 dark:border-slate-700 dark:text-slate-400 dark:hover:text-amber-300 dark:hover:border-amber-800/60'}`}
-          >
-            <Star size={15} aria-hidden="true" className={isFavorited ? 'fill-amber-400 text-amber-500 dark:fill-amber-400 dark:text-amber-400' : ''} />
-            <span>{isFavorited ? '已收藏' : '收藏'}</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {(hasEnglishStem || translateEnabled) && (
+            <button
+              type="button"
+              onClick={handleToggleTranslate}
+              aria-pressed={translateEnabled}
+              title={translateEnabled ? '点击关闭划词翻译' : '开启后将下载完整离线词典（约2MB，仅首次需要）'}
+              className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all
+                ${translateEnabled
+                  ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/30 dark:border-blue-800/70 dark:text-blue-300 dark:hover:bg-blue-950/50'
+                  : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50/60 dark:bg-slate-800/70 dark:border-slate-700 dark:text-slate-400 dark:hover:text-blue-300 dark:hover:border-blue-800/60'}`}
+            >
+              {dictDownloadState === 'downloading' ? (
+                <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+              ) : translateEnabled ? (
+                <BookOpen size={14} aria-hidden="true" />
+              ) : (
+                <Download size={14} aria-hidden="true" />
+              )}
+              <span>
+                {dictDownloadState === 'downloading'
+                  ? '下载词典...'
+                  : translateEnabled
+                    ? (dictDownloadState === 'fallback' ? '划词翻译(基础)' : '划词翻译')
+                    : '划词翻译'}
+              </span>
+            </button>
+          )}
+          {onToggleFavorite && (
+            <button
+              type="button"
+              onClick={onToggleFavorite}
+              aria-pressed={!!isFavorited}
+              aria-label={isFavorited ? '取消收藏此题' : '收藏此题'}
+              className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all
+                ${isFavorited
+                  ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/30 dark:border-amber-800/70 dark:text-amber-300 dark:hover:bg-amber-950/50'
+                  : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-amber-600 hover:border-amber-200 hover:bg-amber-50/60 dark:bg-slate-800/70 dark:border-slate-700 dark:text-slate-400 dark:hover:text-amber-300 dark:hover:border-amber-800/60'}`}
+            >
+              <Star size={15} aria-hidden="true" className={isFavorited ? 'fill-amber-400 text-amber-500 dark:fill-amber-400 dark:text-amber-400' : ''} />
+              <span>{isFavorited ? '已收藏' : '收藏'}</span>
+            </button>
+          )}
+        </div>
       </div>
-      <h2 className="text-lg md:text-2xl font-bold text-slate-900 leading-relaxed mb-4 dark:text-slate-100">{currentQ.question}</h2>
+      <h2
+        onMouseUp={handleQuestionMouseUp}
+        className="text-lg md:text-2xl font-bold text-slate-900 leading-relaxed mb-4 dark:text-slate-100"
+      >
+        {translateEnabled ? (
+          questionSegments.map((seg, idx) => {
+            if (!seg) return null;
+            if (/^[A-Za-z]+(?:'[A-Za-z]+)?$/.test(seg)) {
+              const isSelectedWord = activeLookup.tokenIndex === idx;
+              return (
+                <span
+                  key={idx}
+                  onClick={() => {
+                    const sel = window.getSelection?.()?.toString().trim() || '';
+                    if (sel && sel.toLowerCase() !== seg.toLowerCase()) return;
+                    if (isSelectedWord) {
+                      setLookupState({ key: questionKey, tokenIndex: null, result: null });
+                    } else {
+                      handleTranslateText(seg, idx);
+                    }
+                  }}
+                  title="点击查看离线翻译"
+                  className={`cursor-pointer rounded px-0.5 transition-colors ${
+                    isSelectedWord
+                      ? 'bg-blue-100 text-blue-700 underline decoration-blue-400 decoration-dotted underline-offset-4 dark:bg-blue-900/60 dark:text-blue-200'
+                      : 'hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-blue-900/40 dark:hover:text-blue-300'
+                  }`}
+                >
+                  {seg}
+                </span>
+              );
+            }
+            return <span key={idx}>{seg}</span>;
+          })
+        ) : (
+          currentQ.question
+        )}
+      </h2>
+      {translateEnabled && activeLookup.result && (
+        <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/80 px-4 py-3 text-sm text-slate-800 animate-enter dark:border-blue-800/70 dark:bg-blue-950/30 dark:text-slate-200">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <BookOpen size={15} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                <span className="font-bold text-blue-900 dark:text-blue-200">{activeLookup.result.query}</span>
+                {activeLookup.result.headword &&
+                  activeLookup.result.headword.toLowerCase() !== activeLookup.result.query.toLowerCase() && (
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      → {activeLookup.result.headword}
+                    </span>
+                  )}
+                {activeLookup.result.phonetic && (
+                  <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                    /{activeLookup.result.phonetic}/
+                  </span>
+                )}
+                <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
+                  {activeLookup.result.source === 'full' ? '完整离线词典' : '基础离线词典'}
+                </span>
+              </div>
+              <div className="leading-relaxed text-slate-700 dark:text-slate-300">
+                {activeLookup.result.meaning}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLookupState({ key: questionKey, tokenIndex: null, result: null })}
+              aria-label="关闭翻译"
+              className="shrink-0 rounded-lg p-1 text-slate-400 hover:bg-blue-100 hover:text-slate-600 dark:hover:bg-blue-900/50 dark:hover:text-slate-200"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
       {isFillQuiz ? (
         <>
           <div className="grid gap-3">

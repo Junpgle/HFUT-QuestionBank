@@ -1,0 +1,15 @@
+name = "hfut-backend"
+main = "src/index.js"
+compatibility_date = "2026-01-17"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
+
+routes = [
+  { pattern = "worker.junpgle.me", zone_name = "junpgle.me", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hfut-db"
+database_id = "1a3bdaf3-9c4f-425b-86fc-bd1f16ac49a5"

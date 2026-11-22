@@ -1,4 +1,4 @@
-# HFUT 综合刷题系统 (v5.2.4)
+# HFUT 综合刷题系统 (v5.2.6)
 
 面向合肥工业大学课程的在线多科目刷题与背题系统，支持多题型练习、自定义题库导入、AI 出题、云端同步与社区共建解析。
 
@@ -54,7 +54,7 @@
 - **前端 (`hfut-quiz_cf/`)**：React 19、Vite 7、Tailwind CSS 3、React Router 7、Lucide React、React Markdown、`vite-plugin-pwa`
 - **文档解析**：`xlsx`、`mammoth`、`jszip`
 - **本地存储**：LocalForage (IndexedDB) + LocalStorage
-- **后端 (`hfut-backend/`)**：Cloudflare Workers + Hono + Cloudflare D1 + Resend（原 LeanCloud 目录已废弃）
+- **后端 (`hfut-backend/`)**：Cloudflare Workers + Hono + Cloudflare D1 + Resend
 
 ## 目录结构
 
@@ -76,8 +76,7 @@ HFUT---Innovation-and-Entrepreneurship-Question-Bank/
 │   ├── schema.sql
 │   └── wrangler.toml
 ├── questions/                    # 题库数据文件
-├── hfut-quiz/                    # 旧版前端目录
-└── engine-project【Leancloud已废弃】/ # 已废弃的 LeanCloud 后端
+└── hfut-quiz/                    # 旧版前端目录
 ```
 
 ## 快速开始

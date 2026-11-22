@@ -40,6 +40,20 @@
 - **题目讨论与共建解析**：支持在题目下方发表评论、贡献解析与投票点赞
 - **外观与离线体验**：支持浅色 / 深色模式切换、响应式移动端适配、PWA 离线缓存与版本更新提醒
 
+## HFUT-CS-Online 扩展账号云同步
+
+本项目的 Cloudflare Worker 后端也为独立项目 [HFUT-CS-Online-Sync-Extension](https://github.com/Junpgle/HFUT-CS-Online-Sync-Extension) 提供**可选的账号同步服务**。
+
+- 复用 Question-Bank 原有的用户名、bcrypt 密码验证、邮件激活和 30 天 JWT，无需注册第二套账号；浏览器扩展需单独登录一次。
+- `https://worker.junpgle.me/api/site-sync/exchange`：受现有 JWT 中间件保护，双向合并题目状态、阅读位置和课程同步控制。对同一用户使用乐观并发版本检查，防止不同设备覆盖更新。
+- `POST /api/site-sync/course`：禁用或恢复指定课程同步；`DELETE /api/site-sync`：删除当前登录用户的全部独立云学习记录。
+- 数据独立保存在 D1 的 `SiteSyncState` 表，不修改已有的 `UserProgress`、`Users` 等题库业务表。
+- 扩展独立云同步默认关闭，只有用户主动登录后才上传学习记录；JWT 留在扩展本地存储，明文密码不持久保存。
+- 服务每个账号的学习快照上限约 190 KB，支持登录后手动同步，前端正常使用浏览器存储且服务器故障时不丢失已有本地记录。
+- 仅允许指定浏览器扩展来源与题库现有前端域名；所有读写仍必须验证 JWT，CORS 不是身份认证替代品。
+
+数据库迁移语句已附于 `hfut-backend/schema.sql`，线上 D1 `hfut-db` 已新增该表。扩展的 Microsoft Edge 商店正式包需由扩展项目另行提交更新和审核，详情见扩展的 [隐私政策](https://github.com/Junpgle/HFUT-CS-Online-Sync-Extension/blob/main/PRIVACY.md)。
+
 ## 内置题库
 
 | 科目 | 章节/说明 | 数据文件 |

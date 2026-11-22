@@ -108,3 +108,12 @@ CREATE TABLE IF NOT EXISTS ExplanationLikes (
     leancloud_explanation_id TEXT,
     PRIMARY KEY (user_id, explanation_id)
 );
+
+-- HFUT-CS-Online extension progress: separate from Question-Bank UserProgress.
+-- Use an optimistic version counter to protect concurrent device merges.
+CREATE TABLE IF NOT EXISTS SiteSyncState (
+    user_id INTEGER PRIMARY KEY REFERENCES Users(id) ON DELETE CASCADE,
+    payload TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

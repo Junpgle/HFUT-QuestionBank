@@ -29,6 +29,7 @@ import { safeGet, safeSet } from './utils/storage';
 import {
   getCachedThread,
   setCachedThread,
+  invalidateCachedThread,
   getReportBundleCacheKey,
   invalidateReportBundleCache
 } from './utils/threadCache';
@@ -500,15 +501,31 @@ function Report() {
     }
   };
 
+  const invalidateQuestionCaches = (rawQid) => {
+    invalidateReportBundleCache();
+    if (!rawQid) return;
+    const normQid = normalizeQuestionId(rawQid);
+    invalidateCachedThread(rawQid);
+    if (normQid && normQid !== rawQid) invalidateCachedThread(normQid);
+    setUserExplanations((prev) => {
+      if (!prev[rawQid] && (!normQid || !prev[normQid])) return prev;
+      const next = { ...prev };
+      delete next[rawQid];
+      if (normQid) delete next[normQid];
+      return next;
+    });
+  };
+
   const handleUpdateComment = async (commentId) => {
     const trimmed = editingCommentContent.trim();
     if (!editingCommentId || !trimmed) return;
+    const target = userComments.find((c) => c.id === commentId);
     try {
       await api.request(`/comments/${commentId}`, 'PUT', { content: trimmed });
       setEditingCommentId(null);
       setEditingCommentContent('');
       setUserComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, content: trimmed } : c)));
-      invalidateReportBundleCache();
+      invalidateQuestionCaches(target?.questionId);
     } catch (e) {
       alert('更新评论失败: ' + e.message);
     }
@@ -516,10 +533,11 @@ function Report() {
 
   const handleDeleteComment = async (commentId) => {
     if (!confirm('确定删除此评论吗？')) return;
+    const target = userComments.find((c) => c.id === commentId);
     try {
       await api.request(`/comments/${commentId}`, 'DELETE');
       setUserComments((prev) => prev.filter((c) => c.id !== commentId));
-      invalidateReportBundleCache();
+      invalidateQuestionCaches(target?.questionId);
     } catch (e) {
       alert('删除失败: ' + e.message);
     }
@@ -527,10 +545,11 @@ function Report() {
 
   const handleDeleteExplanation = async (explanationId) => {
     if (!confirm('确定删除此解析吗？')) return;
+    const target = userExplList.find((e) => e.id === explanationId);
     try {
       await api.request(`/explanations/${explanationId}`, 'DELETE');
       setUserExplList((prev) => prev.filter((e) => e.id !== explanationId));
-      invalidateReportBundleCache();
+      invalidateQuestionCaches(target?.questionId);
     } catch (e) {
       alert('删除失败: ' + e.message);
     }

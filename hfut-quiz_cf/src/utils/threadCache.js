@@ -74,6 +74,15 @@ export function setCachedThreadsBatch(threadsMap) {
   writeThreadStore(store);
 }
 
+export function invalidateCachedThread(questionId) {
+  if (!questionId) return;
+  const store = readThreadStore();
+  if (Object.prototype.hasOwnProperty.call(store, questionId)) {
+    delete store[questionId];
+    writeThreadStore(store);
+  }
+}
+
 export function getReportBundleCacheKey() {
   return REPORT_BUNDLE_CACHE_KEY;
 }
@@ -81,6 +90,20 @@ export function getReportBundleCacheKey() {
 export function invalidateReportBundleCache() {
   try {
     sessionStorage.removeItem(REPORT_BUNDLE_CACHE_KEY);
+  } catch {
+    // 忽略 sessionStorage 异常
+  }
+}
+
+export function clearAllInteractionCaches() {
+  try {
+    localStorage.removeItem(THREAD_CACHE_KEY);
+  } catch {
+    // 忽略 localStorage 异常
+  }
+  try {
+    sessionStorage.removeItem(REPORT_BUNDLE_CACHE_KEY);
+    sessionStorage.removeItem('last_initial_sync_at');
   } catch {
     // 忽略 sessionStorage 异常
   }

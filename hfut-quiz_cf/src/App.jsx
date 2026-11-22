@@ -489,6 +489,7 @@ function App() {
                 if (heartbeat) lastHeartbeatAtRef.current = Date.now();
                 if (shouldSendProgress) {
                     progressDirtyRef.current = false;
+                    invalidateReportBundleCache();
                     if (!keepalive) {
                         setSyncStatus('success');
                         setSyncMsg("备份成功");
@@ -1348,6 +1349,7 @@ function App() {
             });
             if (response && response.success) {
                 progressDirtyRef.current = false;
+                invalidateReportBundleCache();
                 if (!silent) {
                     setSyncStatus('success');
                     setSyncMsg("备份成功");

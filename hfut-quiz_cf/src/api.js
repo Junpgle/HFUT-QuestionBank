@@ -1,3 +1,5 @@
+import { clearAllInteractionCaches } from './utils/threadCache';
+
 // 🔧 如果在本地调试，用 localhost；上线后改成您的 Workers 域名
 const API_BASE = 'https://worker.junpgle.me/api';
 
@@ -80,6 +82,7 @@ export const api = {
   async login(username, password) {
     const data = await this.request('/login', 'POST', { username, password });
     if (data.token) {
+      clearAllInteractionCaches();
       localStorage.setItem('auth_token', data.token);
       localStorage.setItem('user_info', JSON.stringify(data.user));
     }
@@ -89,6 +92,7 @@ export const api = {
   async loginWithProgress(username, password) {
     const data = await this.request('/login', 'POST', { username, password });
     if (data.token) {
+      clearAllInteractionCaches();
       localStorage.setItem('auth_token', data.token);
       localStorage.setItem('user_info', JSON.stringify(data.user));
     }
@@ -107,6 +111,7 @@ export const api = {
 
   // 4. 登出
   logout() {
+    clearAllInteractionCaches();
     localStorage.removeItem('auth_token');
     localStorage.removeItem('user_info');
     window.location.hash = '/';

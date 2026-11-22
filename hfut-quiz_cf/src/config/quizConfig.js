@@ -1,4 +1,4 @@
-export const CURRENT_APP_VERSION = '5.2.6';
+export const CURRENT_APP_VERSION = '5.3.0';
 export const LEADERBOARD_LIMIT = 50;
 export const GITHUB_BASE = 'https://raw.githubusercontent.com/Junpgle/HFUT---Innovation-and-Entrepreneurship-Question-Bank/refs/heads/main/questions/';
 export const REPORT_URL = '/#/report';

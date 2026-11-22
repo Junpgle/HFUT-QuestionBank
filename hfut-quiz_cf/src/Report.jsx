@@ -1,17 +1,37 @@
-/* eslint-disable no-unused-vars, no-empty */
-import React, { useEffect, useMemo, useState } from 'react';
-import { api } from './api'; // ✅ 引入 API 适配器
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { api } from './api';
 import * as XLSX from 'xlsx';
-import localforage from 'localforage';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import {
   ChevronLeft, Calendar, CheckCircle, XCircle, Clock, ArrowRight, BookOpen,
-  Zap, AlertCircle, Eye, X, MessageCircle, RefreshCw, Sun, Moon, Monitor
+  Zap, Eye, X, MessageCircle, RefreshCw, Sun, Moon, Monitor
 } from 'lucide-react';
 import './index.css';
-import { parseEnglishCultureJson } from './maogaiParser';
-import { ENGLISH_CULTURE_CHAPTERS } from './constants';
+import {
+  parseEnglishCultureJson,
+  parseMaogaiJson,
+  parseHgdmyMaogaiJson,
+  parseExcelData,
+  parseOldFormatData
+} from './maogaiParser';
+import {
+  LECTURES,
+  MAOGAO_CHAPTERS,
+  ENGLISH_CULTURE_CHAPTERS,
+  SUBJECTS,
+  BANK_CACHE_VERSION,
+  getBankCacheKey,
+  getBankCacheVersionKey
+} from './config/quizConfig';
+import { Markdown } from './components/Markdown';
+import { formatDate } from './utils/date';
+import { normalizeQuestionId } from './utils/questionId';
+import { safeGet, safeSet } from './utils/storage';
+import {
+  getCachedThread,
+  setCachedThread,
+  getReportBundleCacheKey,
+  invalidateReportBundleCache
+} from './utils/threadCache';
 import {
   getThemeMode,
   applyTheme,
@@ -20,91 +40,10 @@ import {
   setThemeMode
 } from './utils/theme';
 
-// ✅ 静态题库配置
-const LECTURES = [
-  { id: 1, name: '第一讲：创新创业概述', file: '创新创业基础第一讲习题.xlsx' },
-  { id: 2, name: '第二讲：创新思维与方法', file: '创新创业基础第二讲习题.xlsx' },
-  { id: 3, name: '第三讲：机会与风险识别', file: '创新创业基础第三讲习题.xlsx' },
-  { id: 4, name: '第四讲：团队与资源整合', file: '创新创业基础第四讲习题.xlsx' },
-  { id: 5, name: '第五讲：商业模式与计划', file: '创新创业基础第五讲习题.xlsx' },
-  { id: 6, name: '第六讲：融资与企业设立', file: '创新创业基础第六讲习题.xlsx' },
-  { id: 7, name: '第七讲：新企业成长管理', file: '创新创业基础第七讲习题.xlsx' },
-];
+const REPORT_BUNDLE_TTL_MS = 3 * 60 * 1000;
 
-const MAOGAI_CHAPTERS = [
-  { id: 1, name: '导论' },
-  { id: 2, name: '第一章' },
-  { id: 3, name: '第二章' },
-  { id: 4, name: '第三章' },
-  { id: 5, name: '第四章' },
-  { id: 6, name: '第五章' },
-  { id: 7, name: '第六章' },
-  { id: 8, name: '第七章' },
-  { id: 9, name: '第八章' }
-];
+const safeText = (v) => (typeof v === 'string' ? v : (v ? String(v) : ''));
 
-const SUBJECTS = [
-  { id: 'innovation', name: '创新创业', icon: '🚀' },
-  { id: 'maogai', name: '毛概', icon: '📖' },
-  { id: 'hgdmy-maogai', name: '马院毛概', icon: '📖' },
-  { id: 'english-culture', name: '英语国家社会与文化', icon: '🌍' }
-];
-
-const safeText = (v) => typeof v === 'string' ? v : (v ? String(v) : '');
-
-// 新旧题目 ID 偏移投影转换器，将历史老ID MG-188440+ 智能向后投射为 MG-1+ 新ID，彻底激活数据报表
-const normalizeQuestionId = (id) => {
-  if (!id) return id;
-  const s = String(id).trim();
-  if (s.startsWith('MG-') || s.startsWith('MG')) {
-    const numStr = s.startsWith('MG-') ? s.substring(3) : s.substring(2);
-    const num = parseInt(numStr);
-    if (!isNaN(num)) {
-      if (num > 188439) {
-        return `MG-${num - 188439}`;
-      } else {
-        return `MG-${num}`;
-      }
-    }
-  }
-  const num = parseInt(s);
-  if (!isNaN(num) && /^\d+$/.test(s)) {
-    if (num > 188439) {
-      return `MG-${num - 188439}`;
-    } else {
-      return `MG-${num}`;
-    }
-  }
-  return id;
-};
-
-// 组件：Markdown 渲染
-const Markdown = ({ content }) => (
-  <div className="prose prose-sm max-w-none text-slate-800">
-    <ReactMarkdown remarkPlugins={[remarkGfm]}>{safeText(content)}</ReactMarkdown>
-  </div>
-);
-
-// 🕒 时间格式化工具：强制将数据库时间视为 UTC 并转为本地时间
-const formatDate = (isoString) => {
-  if (!isoString) return '未知时间';
-  let dateStr = String(isoString);
-  if (!dateStr.includes('T') && !dateStr.includes('Z')) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
-  }
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return isoString;
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false // 24小时制
-  });
-};
-
-// 工具：本地加载 Excel (抛弃外部 GitHub 和云存储链接，极速秒开)
 const fetchLectureArrayBuffer = async (lecture) => {
   const url = `/${encodeURIComponent(lecture.file)}`;
   const res = await fetch(url);
@@ -112,182 +51,27 @@ const fetchLectureArrayBuffer = async (lecture) => {
   return new Uint8Array(await res.arrayBuffer());
 };
 
-// 工具：解析 Excel
-const parseExcelData = (rows, lectureId) => {
-  const clean = rows.filter(r => r && r.length > 0);
-  if (!clean.length) return [];
-  const hasHeader = JSON.stringify(clean[0]).includes('题型');
-  const start = hasHeader ? 1 : 0;
-  const list = [];
-  for (let i = start; i < clean.length; i++) {
-    const r = clean[i];
-    const content = safeText(r[1]).trim();
-    if (!content) continue;
-    const type = String(r[0] || '').includes('多选') ? 'multiple' : (String(r[0] || '').includes('判断') ? 'judgment' : 'single');
-    const ansRaw = safeText(r[2]).toUpperCase();
-    let correct = [];
-    let options = [];
-    if (type === 'judgment') {
-      correct = /^[对T]/.test(ansRaw) ? [0] : [1];
-      options = ['正确', '错误'];
-    } else {
-      options = [r[6], r[7], r[8], r[9], r[10]].filter(Boolean).map(safeText);
-      for (const c of ansRaw) {
-        const idx = c.charCodeAt(0) - 65;
-        if (idx >= 0 && idx < options.length) correct.push(idx);
-      }
-    }
-    list.push({
-      id: `L${lectureId}-${i}`,
-      type,
-      question: content,
-      options,
-      rawAnswer: correct.sort(),
-      explanation: safeText(r[3] || '暂无解析'),
-      category: LECTURES.find(l => l.id === lectureId)?.name || ''
-    });
+const getSubjectBadge = (questionId) => {
+  const normId = String(normalizeQuestionId(questionId) || '');
+  if (normId.startsWith('ENG-CUL-')) {
+    return { label: '英美文化', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' };
   }
-  return list;
-};
-
-// 工具：解析毛概 JSON (与 App.jsx 保持高度一致，智能题型识别 + 章节容灾)
-const parseMaogaiJson = (data) => {
-  const chapters = {};
-  for (let i = 1; i <= 9; i++) chapters[String(i)] = [];
-
-  const srcToChId = {};
-  srcToChId['0（题库更新时间:2025-5-6）'] = 1;
-  for (let i = 1; i <= 8; i++) srcToChId[String(i)] = i + 1;
-
-  for (const q of data) {
-    let chId = 1;
-    if (q['章节ID'] !== undefined) {
-      const tempChId = Number(q['章节ID']);
-      if (tempChId > 0 && tempChId <= 9) {
-        chId = tempChId;
-      } else {
-        chId = (tempChId - 1467 > 0 && tempChId - 1467 <= 9) ? (tempChId - 1467) : 1;
-      }
-    } else {
-      const rawCh = String(q['来源章节请求'] || '0（题库更新时间:2025-5-6）');
-      chId = srcToChId[rawCh] || 1;
-    }
-    const chKey = String(chId);
-    if (!chapters[chKey]) chapters[chKey] = [];
-
-    let type = 'single';
-    const rawTypeName = String(q['题型名称'] || q['题型'] || '');
-    if (rawTypeName.includes('多选') || rawTypeName === '2') {
-      type = 'multiple';
-    } else if (rawTypeName.includes('判断') || rawTypeName === '4') {
-      type = 'judgment';
-    } else if (rawTypeName.includes('填空') || rawTypeName === '7') {
-      type = 'fill';
-    } else {
-      type = 'single';
-    }
-
-    const optionsObj = q['选项'] || {};
-    let options = [];
-    let rawAnswer = [];
-
-    if (type === 'judgment') {
-      options = ['正确', '错误'];
-      rawAnswer = q['正确答案'] === 'A' ? [0] : [1];
-    } else if (type === 'fill') {
-      options = [q['正确答案'] || ''];
-      rawAnswer = [0];
-    } else {
-      const keys = Object.keys(optionsObj).sort();
-      options = keys.map(k => optionsObj[k]);
-      const answerStr = q['正确答案'] || '';
-      const parts = answerStr.split('、').map(s => s.trim()).filter(Boolean);
-      if (parts.length > 0) {
-        parts.forEach(ch => {
-          const idx = keys.indexOf(ch);
-          if (idx >= 0) rawAnswer.push(idx);
-        });
-      }
-      if (rawAnswer.length === 0 && Array.isArray(q['原始answer'])) {
-        rawAnswer = q['原始answer'];
-      }
-    }
-
-    const rawQId = String(q['题目ID'] || '');
-    let finalId = rawQId;
-    if (!rawQId.startsWith('MG-')) {
-      if (rawQId.startsWith('MG')) {
-        finalId = 'MG-' + rawQId.substring(2);
-      } else {
-        finalId = `MG-${rawQId}`;
-      }
-    }
-
-    chapters[chKey].push({
-      id: finalId,
-      type,
-      question: String(q['题干'] || '').trim(),
-      options,
-      rawAnswer,
-      explanation: String(q['解析'] || '暂无解析').trim(),
-      category: MAOGAI_CHAPTERS.find(c => c.id === chId)?.name || `第${chId}章`
-    });
+  if (normId.startsWith('HGD-MG-')) {
+    return { label: '马院毛概', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400' };
   }
-  return chapters;
-};
-
-const parseHgdmyMaogaiJson = (data) => {
-    const questions = data?.questions || data || [];
-    if (!Array.isArray(questions)) return { '1': [] };
-
-    const chapterId = '1';
-    const list = [];
-
-    for (let i = 0; i < questions.length; i++) {
-        const q = questions[i];
-        if (!q || !q.stem) continue;
-
-        let type = 'single';
-        if (q.type === 'multiple') type = 'multiple';
-        else if (q.type === 'judge') type = 'judgment';
-
-        let options = [];
-        let rawAnswer = [];
-
-        if (type === 'judgment') {
-            options = ['正确', '错误'];
-            rawAnswer = q.answer === true ? [0] : [1];
-        } else {
-            options = Array.isArray(q.options) ? q.options : [];
-            const ans = q.answer;
-            if (typeof ans === 'number') {
-                rawAnswer = [ans];
-            } else if (Array.isArray(ans)) {
-                rawAnswer = ans.filter(a => typeof a === 'number').sort((a, b) => a - b);
-            }
-        }
-
-        list.push({
-            id: `HGD-MG-${i + 1}`,
-            type,
-            question: q.stem || '',
-            options,
-            rawAnswer,
-            explanation: q.analysis || '暂无解析',
-            category: '全部题目',
-            lectureId: 1,
-        });
-    }
-
-    return { '1': list };
+  if (normId.startsWith('MG-')) {
+    return { label: '毛概', cls: 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400' };
+  }
+  return { label: '创新创业', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400' };
 };
 
 function Report() {
   const [themeMode, setThemeModeState] = useState(getThemeMode());
+  const [currentUser] = useState(() => api.getCurrentUser());
 
   useEffect(() => {
+    applyTheme(getThemeMode());
     initThemeListener();
-    applyTheme(themeMode);
 
     const handleThemeChanged = (e) => {
       setThemeModeState(e.detail);
@@ -298,15 +82,15 @@ function Report() {
       destroyThemeListener();
       window.removeEventListener('app_theme_changed', handleThemeChanged);
     };
-  }, [themeMode]);
+  }, []);
 
   const [ready, setReady] = useState(false);
+  const [refreshingCloud, setRefreshingCloud] = useState(false);
   const [customSubjects, setCustomSubjects] = useState([]);
   const allSubjects = useMemo(() => [...SUBJECTS, ...customSubjects], [customSubjects]);
-  const [customBanks, setCustomBanks] = useState({}); // { [subjectId]: bankData }
-  
+  const [customBanks, setCustomBanks] = useState({});
+
   const [selectedSubject, setSelectedSubject] = useState(() => {
-    // 从 URL hash 参数读取来源学科，实现从哪个学科进入就默认展示哪个学科的报表
     const hash = window.location.hash;
     const queryIndex = hash.indexOf('?');
     if (queryIndex !== -1) {
@@ -317,19 +101,17 @@ function Report() {
     return 'innovation';
   });
   const [data, setData] = useState(null);
-  
-  // 两个学科独立的题库状态，实现全局题库秒加载与高速查询
+
   const [innovationBank, setInnovationBank] = useState({});
   const [maogaiBank, setMaogaiBank] = useState({});
   const [hgdmyMaogaiBank, setHgdmyMaogaiBank] = useState({});
   const [englishCultureBank, setEnglishCultureBank] = useState({});
-  
+
   const [selectedDate, setSelectedDate] = useState(null);
   const [viewingQuestion, setViewingQuestion] = useState(null);
-  const [gateReason, setGateReason] = useState('');
 
   // 评论与解析相关
-  const [userExplanations, setUserExplanations] = useState({}); 
+  const [userExplanations, setUserExplanations] = useState({});
   const [editingExpId, setEditingExpId] = useState(null);
   const [editingExpContent, setEditingExpContent] = useState('');
 
@@ -347,137 +129,207 @@ function Report() {
   const [explanationPage, setExplanationPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
 
-  // 初始化加载：并行极速抓取云端与本地缓存
+  const loadReportBundle = useCallback(async (force = false) => {
+    if (!currentUser) return;
+    const cacheKey = getReportBundleCacheKey();
+    if (!force) {
+      try {
+        const raw = sessionStorage.getItem(cacheKey);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          if (cached && Date.now() - cached.ts < REPORT_BUNDLE_TTL_MS && cached.data) {
+            setData(cached.data.progress || null);
+            setUserComments(Array.isArray(cached.data.comments) ? cached.data.comments : []);
+            setUserExplList(Array.isArray(cached.data.explanations) ? cached.data.explanations : []);
+            return;
+          }
+        }
+      } catch {
+        // 忽略缓存解析错误
+      }
+    }
+
+    try {
+      const bundle = await api.getReportBundle();
+      if (bundle) {
+        setData(bundle.progress || null);
+        setUserComments(Array.isArray(bundle.comments) ? bundle.comments : []);
+        setUserExplList(Array.isArray(bundle.explanations) ? bundle.explanations : []);
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: bundle }));
+        } catch {
+          // 忽略 sessionStorage 异常
+        }
+      }
+    } catch (e) {
+      console.error('Report bundle fetch error', e);
+    }
+  }, [currentUser]);
+
   useEffect(() => {
     const init = async () => {
-      const user = api.getCurrentUser();
-      if (!user) { setGateReason('尚未登录，请先登录后查看报表'); return; }
+      // 1. 登录用户用 1 次 3 合 1 请求拉取（进度 + 我的评论 + 我的解析）
+      const cloudPromise = loadReportBundle(false);
 
-      // 1. 获取云端进度
-      try {
-        const res = await api.request('/userProgress');
-        if (res && res.found && res.progress) {
-          setData(res.progress);
+      // 2. 加载创新创业题库（统一使用 getBankCacheKey）
+      const loadInnovation = async () => {
+        try {
+          const cacheKey = getBankCacheKey('innovation');
+          const verKey = getBankCacheVersionKey('innovation');
+          const [cached, cachedVer] = await Promise.all([safeGet(cacheKey), safeGet(verKey)]);
+          if (cached && Number(cachedVer) === BANK_CACHE_VERSION && Object.keys(cached).length > 0) {
+            setInnovationBank(cached);
+          } else {
+            const newBank = {};
+            await Promise.all(LECTURES.map(async (lecture) => {
+              try {
+                const buf = await fetchLectureArrayBuffer(lecture);
+                const wb = XLSX.read(buf, { type: 'array' });
+                const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+                newBank[lecture.id] = lecture.id === 99
+                  ? parseOldFormatData(raw, lecture.id, lecture.name)
+                  : parseExcelData(raw, lecture.id, lecture.name);
+              } catch (e) {
+                console.warn('Innovation bank load error', lecture.file, e);
+              }
+            }));
+            setInnovationBank(newBank);
+            if (Object.keys(newBank).length > 0) {
+              await safeSet(cacheKey, newBank);
+              await safeSet(verKey, BANK_CACHE_VERSION);
+            }
+          }
+        } catch (e) {
+          console.warn('Innovation bank load error', e);
         }
-      } catch (e) { console.error('Data fetch error', e); }
+      };
 
-      // 2. 加载创新创业题库 (带 localforage 缓存 + 同源 public 并行极速抓取)
-      try {
-        const cached = await localforage.getItem('hf_bank_v2');
-        if (cached && Object.keys(cached).length > 0) {
-          setInnovationBank(cached);
-        } else {
-          const newBank = {};
-          await Promise.all(LECTURES.map(async (lecture) => {
+      // 3. 加载毛概题库
+      const loadMaogai = async () => {
+        try {
+          const cacheKey = getBankCacheKey('maogai');
+          const verKey = getBankCacheVersionKey('maogai');
+          const [cachedM, cachedVer] = await Promise.all([safeGet(cacheKey), safeGet(verKey)]);
+          if (cachedM && Number(cachedVer) === BANK_CACHE_VERSION && Object.keys(cachedM).length > 0) {
+            setMaogaiBank(cachedM);
+          } else {
+            const res = await fetch('/maogai_full.json');
+            if (res.ok) {
+              const rawJson = await res.json();
+              const parsed = parseMaogaiJson(rawJson);
+              setMaogaiBank(parsed);
+              await safeSet(cacheKey, parsed);
+              await safeSet(verKey, BANK_CACHE_VERSION);
+            }
+          }
+        } catch (e) {
+          console.warn('Maogai bank load error', e);
+        }
+      };
+
+      // 4. 加载马院毛概题库
+      const loadHgdmy = async () => {
+        try {
+          const cacheKey = getBankCacheKey('hgdmy-maogai');
+          const verKey = getBankCacheVersionKey('hgdmy-maogai');
+          const [cachedH, cachedVer] = await Promise.all([safeGet(cacheKey), safeGet(verKey)]);
+          if (cachedH && Number(cachedVer) === BANK_CACHE_VERSION && Object.keys(cachedH).length > 0) {
+            setHgdmyMaogaiBank(cachedH);
+          } else {
+            const res = await fetch('/hgdmy-maogai.json');
+            if (res.ok) {
+              const rawJson = await res.json();
+              const parsed = parseHgdmyMaogaiJson(rawJson);
+              setHgdmyMaogaiBank(parsed);
+              await safeSet(cacheKey, parsed);
+              await safeSet(verKey, BANK_CACHE_VERSION);
+            }
+          }
+        } catch (e) {
+          console.warn('Hgdmy maogai bank load error', e);
+        }
+      };
+
+      // 5. 加载英语国家社会与文化题库
+      const loadEnglishCulture = async () => {
+        try {
+          const cacheKey = getBankCacheKey('english-culture');
+          const verKey = getBankCacheVersionKey('english-culture');
+          const [cachedE, cachedVer] = await Promise.all([safeGet(cacheKey), safeGet(verKey)]);
+          if (cachedE && Number(cachedVer) === BANK_CACHE_VERSION && Object.keys(cachedE).length > 0) {
+            setEnglishCultureBank(cachedE);
+          } else {
+            const res = await fetch('/english-culture.json');
+            if (res.ok) {
+              const rawJson = await res.json();
+              const parsed = parseEnglishCultureJson(rawJson);
+              setEnglishCultureBank(parsed);
+              await safeSet(cacheKey, parsed);
+              await safeSet(verKey, BANK_CACHE_VERSION);
+            }
+          }
+        } catch (e) {
+          console.warn('English culture bank load error', e);
+        }
+      };
+
+      // 6. 加载自定义学科列表与本地自定义题库
+      const loadCustom = async () => {
+        try {
+          const cSubs = await safeGet('custom_subjects_list', []);
+          const validSubs = Array.isArray(cSubs) ? cSubs : [];
+          setCustomSubjects(validSubs);
+          const cBanks = {};
+          await Promise.all(validSubs.map(async (sub) => {
             try {
-              const buf = await fetchLectureArrayBuffer(lecture);
-              const wb = XLSX.read(buf, { type: 'array' });
-              const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
-              newBank[lecture.id] = parseExcelData(raw, lecture.id);
-            } catch (e) { console.warn('Innovation bank load error', lecture.file, e); }
-          }));
-          setInnovationBank(newBank);
-          await localforage.setItem('hf_bank_v2', newBank);
-        }
-      } catch (e) { console.warn('Innovation bank load error', e); }
-
-      // 3. 加载毛概题库 (带 localforage 缓存 + 同源 JSON 抓取)
-      try {
-        const cachedM = await localforage.getItem('hf_bank_maogai_v3');
-        if (cachedM && Object.keys(cachedM).length > 0) {
-          setMaogaiBank(cachedM);
-        } else {
-          const res = await fetch('/maogai_full.json');
-          if (res.ok) {
-            const rawJson = await res.json();
-            const parsed = parseMaogaiJson(rawJson);
-            setMaogaiBank(parsed);
-            await localforage.setItem('hf_bank_maogai_v3', parsed);
-          }
-        }
-      } catch (e) { console.warn('Maogai bank load error', e); }
-
-      // 3.5 加载马院毛概题库
-      try {
-        const cachedH = await localforage.getItem('hf_bank_hgdmy_maogai');
-        if (cachedH && Object.keys(cachedH).length > 0) {
-          setHgdmyMaogaiBank(cachedH);
-        } else {
-          const res = await fetch('/hgdmy-maogai.json');
-          if (res.ok) {
-            const rawJson = await res.json();
-            const parsed = parseHgdmyMaogaiJson(rawJson);
-            setHgdmyMaogaiBank(parsed);
-            await localforage.setItem('hf_bank_hgdmy_maogai', parsed);
-          }
-        }
-      } catch (e) { console.warn('Hgdmy maogai bank load error', e); }
-
-      // 3.6 加载英语国家社会与文化题库
-      try {
-        const cachedE = await localforage.getItem('hf_question_bank_english-culture');
-        if (cachedE && Object.keys(cachedE).length > 0) {
-          setEnglishCultureBank(cachedE);
-        } else {
-          const res = await fetch('/english-culture.json');
-          if (res.ok) {
-            const rawJson = await res.json();
-            const parsed = parseEnglishCultureJson(rawJson);
-            setEnglishCultureBank(parsed);
-            await localforage.setItem('hf_question_bank_english-culture', parsed);
-          }
-        }
-      } catch (e) { console.warn('English culture bank load error', e); }
-
-      // 3.8 加载自定义学科列表与本地自定义题库
-      try {
-        const cSubs = await localforage.getItem('custom_subjects_list') || [];
-        setCustomSubjects(cSubs);
-        const cBanks = {};
-        if (Array.isArray(cSubs)) {
-          await Promise.all(cSubs.map(async (sub) => {
-            try {
-              const cachedBank = await localforage.getItem(`hf_question_bank_${sub.id}`);
+              const cachedBank = await safeGet(getBankCacheKey(sub.id));
               if (cachedBank && Object.keys(cachedBank).length > 0) {
                 cBanks[sub.id] = cachedBank;
               }
-            } catch (e) { console.warn('Load custom bank fail', sub.id, e); }
+            } catch (e) {
+              console.warn('Load custom bank fail', sub.id, e);
+            }
           }));
+          setCustomBanks(cBanks);
+        } catch (e) {
+          console.warn('Load custom subjects fail', e);
         }
-        setCustomBanks(cBanks);
-      } catch (e) { console.warn('Load custom subjects fail', e); }
+      };
 
-      // 4. 加载本地进度
-      try {
-        const [localHist, localBrushed, localMastered] = await Promise.all([
-          localforage.getItem('app_history').catch(() => []),
-          localforage.getItem('app_brushedIds').catch(() => []),
-          localforage.getItem('app_masteredIds').catch(() => []),
-        ]);
-        setLocalProgress({
-          history: Array.isArray(localHist) ? localHist : [],
-          brushedIds: Array.isArray(localBrushed) ? localBrushed : [],
-          masteredIds: Array.isArray(localMastered) ? localMastered : [],
-        });
-      } catch (e) { console.warn('Load local progress fail', e); }
-      
-      setReady(true);
-
-      // 5. 加载我的评论和解析
-      if (user) {
+      // 7. 加载本地进度
+      const loadLocalProgress = async () => {
         try {
-          const myComments = await api.request('/user/comments');
-          if (Array.isArray(myComments)) setUserComments(myComments);
+          const [localHist, localBrushed, localMastered] = await Promise.all([
+            safeGet('app_history', []),
+            safeGet('app_brushedIds', []),
+            safeGet('app_masteredIds', []),
+          ]);
+          setLocalProgress({
+            history: Array.isArray(localHist) ? localHist : [],
+            brushedIds: Array.isArray(localBrushed) ? localBrushed : [],
+            masteredIds: Array.isArray(localMastered) ? localMastered : [],
+          });
+        } catch (e) {
+          console.warn('Load local progress fail', e);
+        }
+      };
 
-          const myExps = await api.request('/user/explanations');
-          if (Array.isArray(myExps)) setUserExplList(myExps);
-        } catch (e) { console.warn('Load user data fail', e); }
-      }
+      await Promise.all([
+        cloudPromise,
+        loadInnovation(),
+        loadMaogai(),
+        loadHgdmy(),
+        loadEnglishCulture(),
+        loadCustom(),
+        loadLocalProgress()
+      ]);
+
+      setReady(true);
     };
     init();
-  }, []);
+  }, [loadReportBundle]);
 
-  // 统一按学科过滤并归一化题目ID
+  // 统一按学科过滤并归一化题目 ID
   const mergedHistory = useMemo(() => {
     let remoteHistory = [];
     if (data?.history) {
@@ -504,49 +356,39 @@ function Report() {
     return new Set([...remote, ...local].map(normalizeQuestionId));
   }, [data, localProgress]);
 
+  const matchesSubject = (questionId) => {
+    const qid = String(questionId || '');
+    const isMaogai = qid.startsWith('MG-');
+    const isHgdmy = qid.startsWith('HGD-MG-') || qid.startsWith('HGD-MG');
+    const isEnglishCulture = qid.startsWith('ENG-CUL-');
+    const isCustom = qid.startsWith('custom_');
+    if (selectedSubject && selectedSubject.startsWith('custom_')) {
+      return qid.startsWith(selectedSubject);
+    }
+    if (selectedSubject === 'maogai') return isMaogai && !isHgdmy;
+    if (selectedSubject === 'hgdmy-maogai') return isHgdmy;
+    if (selectedSubject === 'english-culture') return isEnglishCulture;
+    return !isMaogai && !isHgdmy && !isEnglishCulture && !isCustom;
+  };
 
+  const activeHistory = useMemo(
+    () => mergedHistory.filter((h) => matchesSubject(h.questionId)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mergedHistory, selectedSubject]
+  );
 
-  // ✅ 核心：按学科分类隔离计算
-  const activeHistory = useMemo(() => {
-    return mergedHistory.filter(h => {
-      const qid = h.questionId || '';
-      const isMaogai = qid.startsWith('MG-');
-      const isHgdmy = qid.startsWith('HGD-MG-') || qid.startsWith('HGD-MG');
-      const isEnglishCulture = qid.startsWith('ENG-CUL-');
-      const isCustom = qid.startsWith('custom_');
-      if (selectedSubject && selectedSubject.startsWith('custom_')) {
-        return qid.startsWith(selectedSubject);
-      }
-      if (selectedSubject === 'maogai') return isMaogai && !isHgdmy;
-      if (selectedSubject === 'hgdmy-maogai') return isHgdmy;
-      if (selectedSubject === 'english-culture') return isEnglishCulture;
-      return !isMaogai && !isHgdmy && !isEnglishCulture && !isCustom;
-    });
-  }, [mergedHistory, selectedSubject]);
-
-  const activeBrushed = useMemo(() => {
-    return new Set([...normalizedBrushed].filter(id => {
-      const isMaogai = id.startsWith('MG-');
-      const isHgdmy = id.startsWith('HGD-MG-') || id.startsWith('HGD-MG');
-      const isEnglishCulture = id.startsWith('ENG-CUL-');
-      const isCustom = id.startsWith('custom_');
-      if (selectedSubject && selectedSubject.startsWith('custom_')) {
-        return id.startsWith(selectedSubject);
-      }
-      if (selectedSubject === 'maogai') return isMaogai && !isHgdmy;
-      if (selectedSubject === 'hgdmy-maogai') return isHgdmy;
-      if (selectedSubject === 'english-culture') return isEnglishCulture;
-      return !isMaogai && !isHgdmy && !isEnglishCulture && !isCustom;
-    }));
-  }, [normalizedBrushed, selectedSubject]);
+  const activeBrushed = useMemo(
+    () => new Set([...normalizedBrushed].filter((id) => matchesSubject(id))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [normalizedBrushed, selectedSubject]
+  );
 
   // 日期提取
   const dates = useMemo(() => {
     const uniqueDates = new Set();
-    activeHistory.forEach(h => {
+    activeHistory.forEach((h) => {
       if (h && h.timestamp) {
-        const date = new Date(h.timestamp).toLocaleDateString();
-        uniqueDates.add(date);
+        uniqueDates.add(new Date(h.timestamp).toLocaleDateString());
       }
     });
     const sortedDates = [...uniqueDates].sort((a, b) => new Date(b) - new Date(a));
@@ -555,63 +397,61 @@ function Report() {
 
   // 保证选中的日期一定在可用日期列表中
   useEffect(() => {
-    if (dates.length > 0) {
-      if (!selectedDate || !dates.includes(selectedDate)) {
-        const timer = setTimeout(() => {
-          setSelectedDate(dates[0]);
-        }, 0);
-        return () => clearTimeout(timer);
-      }
+    if (dates.length > 0 && (!selectedDate || !dates.includes(selectedDate))) {
+      const timer = setTimeout(() => {
+        setSelectedDate(dates[0]);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [dates, selectedDate]);
 
   const dailyRecords = useMemo(() => {
     if (!selectedDate) return [];
     return activeHistory
-        .filter(h => new Date(h.timestamp).toLocaleDateString() === selectedDate)
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-        .map(h => ({ ...h, questionTitle: safeText(h.questionTitle), userAnswer: safeText(h.userAnswer) }));
+      .filter((h) => new Date(h.timestamp).toLocaleDateString() === selectedDate)
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .map((h) => ({ ...h, questionTitle: safeText(h.questionTitle), userAnswer: safeText(h.userAnswer) }));
   }, [activeHistory, selectedDate]);
 
   const dailyStats = useMemo(() => {
-    const total = dailyRecords.filter(h => h.action === 'answer').length;
-    const correct = dailyRecords.filter(h => h.action === 'answer' && h.isCorrect).length;
-    const mastered = new Set(dailyRecords.filter(h => h.isCorrect).map(h => h.questionId)).size;
+    const total = dailyRecords.filter((h) => h.action === 'answer').length;
+    const correct = dailyRecords.filter((h) => h.action === 'answer' && h.isCorrect).length;
+    const mastered = new Set(dailyRecords.filter((h) => h.isCorrect).map((h) => h.questionId)).size;
     return { total, correct, rate: total ? Math.round((correct / total) * 100) : 0, mastered };
   }, [dailyRecords]);
 
   // 跨学科全局题目智能查找器
   const getQuestionDetails = (qid) => {
     if (!qid) return null;
-    const normalizedQid = normalizeQuestionId(qid);
+    const normalizedQid = String(normalizeQuestionId(qid));
     if (normalizedQid.startsWith('custom_')) {
       for (const subId in customBanks) {
         if (normalizedQid.startsWith(subId)) {
           const bank = customBanks[subId];
           for (const chId in bank) {
-            const q = bank[chId]?.find(i => i.id === normalizedQid);
+            const q = bank[chId]?.find((i) => i.id === normalizedQid);
             if (q) return q;
           }
         }
       }
     } else if (normalizedQid.startsWith('ENG-CUL-')) {
       for (const chId in englishCultureBank) {
-        const q = englishCultureBank[chId]?.find(i => i.id === normalizedQid);
+        const q = englishCultureBank[chId]?.find((i) => i.id === normalizedQid);
         if (q) return q;
       }
     } else if (normalizedQid.startsWith('HGD-MG-') || normalizedQid.startsWith('HGD-MG')) {
       for (const chId in hgdmyMaogaiBank) {
-        const q = hgdmyMaogaiBank[chId]?.find(i => i.id === normalizedQid);
+        const q = hgdmyMaogaiBank[chId]?.find((i) => i.id === normalizedQid);
         if (q) return q;
       }
     } else if (normalizedQid.startsWith('MG-')) {
       for (const chId in maogaiBank) {
-        const q = maogaiBank[chId]?.find(i => i.id === normalizedQid);
+        const q = maogaiBank[chId]?.find((i) => i.id === normalizedQid);
         if (q) return q;
       }
     } else {
       for (const lid in innovationBank) {
-        const q = innovationBank[lid]?.find(i => i.id === normalizedQid);
+        const q = innovationBank[lid]?.find((i) => i.id === normalizedQid);
         if (q) return q;
       }
     }
@@ -619,52 +459,90 @@ function Report() {
   };
 
   const loadQuestionExplanations = async (questionId) => {
+    if (!questionId || String(questionId).startsWith('custom_')) return;
+    if (userExplanations[questionId]) return;
+
+    const cachedThread = getCachedThread(questionId);
+    if (cachedThread && Array.isArray(cachedThread.explanations)) {
+      setUserExplanations((prev) => ({ ...prev, [questionId]: cachedThread.explanations }));
+      return;
+    }
+
     try {
-      const list = await api.request(`/explanations?questionId=${questionId}`);
-      setUserExplanations(prev => ({ ...prev, [questionId]: list }));
-    } catch (e) { console.warn('load explanations fail', e); }
+      const list = await api.getExplanations(questionId);
+      const safeList = Array.isArray(list) ? list : [];
+      setUserExplanations((prev) => ({ ...prev, [questionId]: safeList }));
+      const existing = cachedThread || { comments: [], explanations: [] };
+      setCachedThread(questionId, { ...existing, explanations: safeList });
+    } catch (e) {
+      console.warn('load explanations fail', e);
+    }
   };
 
   const handleUpdateExp = async (questionId) => {
-    if (!editingExpId || !editingExpContent.trim()) return;
+    const trimmed = editingExpContent.trim();
+    if (!editingExpId || !trimmed) return;
+    const targetId = editingExpId;
     try {
-      await api.request(`/explanations/${editingExpId}`, 'PUT', { content: editingExpContent.trim() });
+      await api.request(`/explanations/${targetId}`, 'PUT', { content: trimmed });
       setEditingExpId(null);
       setEditingExpContent('');
-      await loadQuestionExplanations(questionId);
-    } catch (e) { alert('更新解析失败: ' + e.message); }
+      setUserExplanations((prev) => {
+        const nextList = (prev[questionId] || []).map((e) => (e.id === targetId ? { ...e, content: trimmed } : e));
+        const cached = getCachedThread(questionId) || { comments: [], explanations: [] };
+        setCachedThread(questionId, { ...cached, explanations: nextList });
+        return { ...prev, [questionId]: nextList };
+      });
+      setUserExplList((prev) => prev.map((e) => (e.id === targetId ? { ...e, content: trimmed } : e)));
+      invalidateReportBundleCache();
+    } catch (e) {
+      alert('更新解析失败: ' + e.message);
+    }
   };
 
   const handleUpdateComment = async (commentId) => {
-    if (!editingCommentId || !editingCommentContent.trim()) return;
+    const trimmed = editingCommentContent.trim();
+    if (!editingCommentId || !trimmed) return;
     try {
-      await api.request(`/comments/${commentId}`, 'PUT', { content: editingCommentContent.trim() });
+      await api.request(`/comments/${commentId}`, 'PUT', { content: trimmed });
       setEditingCommentId(null);
       setEditingCommentContent('');
-      setUserComments(prev => prev.map(c => c.id === commentId ? { ...c, content: editingCommentContent } : c));
-    } catch (e) { alert('更新评论失败: ' + e.message); }
+      setUserComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, content: trimmed } : c)));
+      invalidateReportBundleCache();
+    } catch (e) {
+      alert('更新评论失败: ' + e.message);
+    }
   };
 
   const handleDeleteComment = async (commentId) => {
     if (!confirm('确定删除此评论吗？')) return;
     try {
       await api.request(`/comments/${commentId}`, 'DELETE');
-      setUserComments(prev => prev.filter(c => c.id !== commentId));
-    } catch (e) { alert('删除失败: ' + e.message); }
+      setUserComments((prev) => prev.filter((c) => c.id !== commentId));
+      invalidateReportBundleCache();
+    } catch (e) {
+      alert('删除失败: ' + e.message);
+    }
   };
 
   const handleDeleteExplanation = async (explanationId) => {
     if (!confirm('确定删除此解析吗？')) return;
     try {
       await api.request(`/explanations/${explanationId}`, 'DELETE');
-      setUserExplList(prev => prev.filter(e => e.id !== explanationId));
-    } catch (e) { alert('删除失败: ' + e.message); }
+      setUserExplList((prev) => prev.filter((e) => e.id !== explanationId));
+      invalidateReportBundleCache();
+    } catch (e) {
+      alert('删除失败: ' + e.message);
+    }
   };
 
   const openQuestion = (qid) => {
     const normalized = normalizeQuestionId(qid);
     const q = getQuestionDetails(normalized);
-    if (!q) { alert('题库中未找到该题（当前可能尚未加载完整）'); return; }
+    if (!q) {
+      alert('题库中未找到该题（当前可能尚未加载完整）');
+      return;
+    }
     const formatted = {
       ...q,
       question: safeText(q.question),
@@ -676,45 +554,45 @@ function Report() {
     loadQuestionExplanations(formatted.id);
   };
 
-  useEffect(() => {
-    if (viewingQuestion) {
-      const timer = setTimeout(() => {
-        loadQuestionExplanations(viewingQuestion.id);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [viewingQuestion]);
-
   const renderUserExps = (questionId) => {
     const list = userExplanations[questionId];
     if (!list || !list.length) return null;
-    const currentUser = api.getCurrentUser();
     return (
-      <div className="mt-4 rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-3">
-        <div className="text-xs font-semibold text-slate-600 flex items-center gap-2">
-          <BookOpen size={14}/> 用户提供的解析
+      <div className="mt-4 rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-3 dark:bg-slate-900/60 dark:border-slate-800">
+        <div className="text-xs font-semibold text-slate-600 flex items-center gap-2 dark:text-slate-300">
+          <BookOpen size={14} /> 用户提供的解析
         </div>
-        {list.map(exp => {
+        {list.map((exp) => {
           const isOwner = currentUser && exp.authorId === currentUser.id;
           const isEditing = editingExpId === exp.id;
           return (
-            <div key={exp.id} className="bg-white border border-slate-100 p-3 rounded-lg space-y-2">
-              <div className="text-xs text-slate-500 flex items-center justify-between">
+            <div key={exp.id} className="bg-white border border-slate-100 p-3 rounded-lg space-y-2 dark:bg-slate-900 dark:border-slate-800">
+              <div className="text-xs text-slate-500 flex items-center justify-between dark:text-slate-400">
                 <span>{exp.author} · {formatDate(exp.createdAt)}</span>
-                {isOwner && !isEditing && <button onClick={() => { setEditingExpId(exp.id); setEditingExpContent(exp.content); }} className="text-blue-600 text-xs">编辑</button>}
+                {isOwner && !isEditing && (
+                  <button
+                    onClick={() => {
+                      setEditingExpId(exp.id);
+                      setEditingExpContent(exp.content);
+                    }}
+                    className="text-blue-600 text-xs dark:text-blue-400"
+                  >
+                    编辑
+                  </button>
+                )}
               </div>
               {isEditing ? (
                 <div className="space-y-2">
-                  <textarea value={editingExpContent} onChange={e=>setEditingExpContent(e.target.value)} rows={3} className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm" />
+                  <textarea value={editingExpContent} onChange={(e) => setEditingExpContent(e.target.value)} rows={3} className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm dark:bg-slate-950 dark:border-slate-700 dark:text-slate-200" />
                   <div className="flex justify-end gap-2 text-xs">
                     <button onClick={() => handleUpdateExp(questionId)} className="px-3 py-1 bg-blue-600 text-white rounded-lg">保存</button>
-                    <button onClick={() => { setEditingExpId(null); setEditingExpContent(''); }} className="px-3 py-1 bg-slate-200 text-slate-700 rounded-lg">取消</button>
+                    <button onClick={() => { setEditingExpId(null); setEditingExpContent(''); }} className="px-3 py-1 bg-slate-200 text-slate-700 rounded-lg dark:bg-slate-800 dark:text-slate-300">取消</button>
                   </div>
                 </div>
               ) : (
                 <>
                   <Markdown content={exp.content} />
-                  <div className="text-xs text-amber-600">👍 {exp.votes || 0}</div>
+                  <div className="text-xs text-amber-600 dark:text-amber-400">👍 {exp.votes || 0}</div>
                 </>
               )}
             </div>
@@ -725,33 +603,59 @@ function Report() {
   };
 
   const renderMyCommentsSection = () => (
-    <button onClick={() => { setShowModal('comments'); setCommentPage(1); }}
-            className="glass-card rounded-2xl p-6 w-full hover:shadow-lg transition-shadow bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
+    <button
+      onClick={() => {
+        if (!currentUser) {
+          alert('请登录后查看您的云端评论');
+          return;
+        }
+        setShowModal('comments');
+        setCommentPage(1);
+      }}
+      className="glass-card rounded-2xl p-6 w-full hover:shadow-lg transition-shadow bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800"
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <MessageCircle size={24} className="text-blue-600 dark:text-blue-400" />
           <div className="text-left">
             <div className="font-bold text-slate-800 dark:text-slate-200">我的评论</div>
-            <div className="text-sm text-slate-500 dark:text-slate-400">共 {userComments.length} 条</div>
+            <div className="text-sm text-slate-500 dark:text-slate-400">
+              {currentUser ? `共 ${userComments.length} 条` : '登录后查看'}
+            </div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-blue-600 dark:text-blue-450">{userComments.length}</div>
+        <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+          {currentUser ? userComments.length : '-'}
+        </div>
       </div>
     </button>
   );
 
   const renderMyExplanationsSection = () => (
-    <button onClick={() => { setShowModal('explanations'); setExplanationPage(1); }}
-            className="glass-card rounded-2xl p-6 w-full hover:shadow-lg transition-shadow bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
+    <button
+      onClick={() => {
+        if (!currentUser) {
+          alert('请登录后查看您的云端解析');
+          return;
+        }
+        setShowModal('explanations');
+        setExplanationPage(1);
+      }}
+      className="glass-card rounded-2xl p-6 w-full hover:shadow-lg transition-shadow bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800"
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Zap size={24} className="text-yellow-600 dark:text-amber-500" />
           <div className="text-left">
             <div className="font-bold text-slate-800 dark:text-slate-200">我的解析</div>
-            <div className="text-sm text-slate-500 dark:text-slate-400">共 {userExplList.length} 条</div>
+            <div className="text-sm text-slate-500 dark:text-slate-400">
+              {currentUser ? `共 ${userExplList.length} 条` : '登录后查看'}
+            </div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-yellow-600 dark:text-amber-500">{userExplList.length}</div>
+        <div className="text-2xl font-bold text-yellow-600 dark:text-amber-500">
+          {currentUser ? userExplList.length : '-'}
+        </div>
       </div>
     </button>
   );
@@ -762,22 +666,22 @@ function Report() {
 
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setShowModal(null)}>
-        <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[80vh] shadow-2xl flex flex-col dark:bg-slate-900 dark:border dark:border-slate-800" onClick={e => e.stopPropagation()}>
-          <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-850">
-            <h2 className="font-bold text-slate-800 flex items-center gap-2 dark:text-slate-100"><MessageCircle size={20} className="text-blue-600 dark:text-blue-400"/>我的评论</h2>
-            <button onClick={() => setShowModal(null)} className="p-1 hover:bg-slate-100 rounded-full dark:hover:bg-slate-800 dark:text-slate-400"><X size={20}/></button>
+        <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[80vh] shadow-2xl flex flex-col dark:bg-slate-900 dark:border dark:border-slate-800" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-800">
+            <h2 className="font-bold text-slate-800 flex items-center gap-2 dark:text-slate-100"><MessageCircle size={20} className="text-blue-600 dark:text-blue-400" />我的评论</h2>
+            <button onClick={() => setShowModal(null)} className="p-1 hover:bg-slate-100 rounded-full dark:hover:bg-slate-800 dark:text-slate-400"><X size={20} /></button>
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-3">
-            {userComments.length === 0 ? <p className="text-center text-slate-400 dark:text-slate-500">暂无评论</p> : paginatedComments.map(comment => {
+            {userComments.length === 0 ? <p className="text-center text-slate-400 dark:text-slate-500">暂无评论</p> : paginatedComments.map((comment) => {
               const isEditing = editingCommentId === comment.id;
               const normId = normalizeQuestionId(comment.questionId);
-              const isMaogai = normId.startsWith('MG-');
+              const badge = getSubjectBadge(normId);
               return (
-                <div key={comment.id} className="bg-slate-50 border border-slate-200 p-4 rounded-lg space-y-2 dark:bg-slate-950 dark:border-slate-850">
+                <div key={comment.id} className="bg-slate-50 border border-slate-200 p-4 rounded-lg space-y-2 dark:bg-slate-950 dark:border-slate-800">
                   <div className="flex justify-between">
                     <p className="text-sm font-medium text-slate-700 cursor-pointer hover:text-blue-600 dark:text-slate-300 dark:hover:text-blue-400" onClick={() => { openQuestion(comment.questionId); setShowModal(null); }}>
-                      <span className={`px-1.5 py-0.5 rounded text-xs mr-2 font-bold ${isMaogai ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400'}`}>
-                        {isMaogai ? '毛概' : '创新创业'}
+                      <span className={`px-1.5 py-0.5 rounded text-xs mr-2 font-bold ${badge.cls}`}>
+                        {badge.label}
                       </span>
                       ID: {normId}
                     </p>
@@ -785,7 +689,7 @@ function Report() {
                   </div>
                   {isEditing ? (
                     <div className="space-y-2">
-                      <textarea value={editingCommentContent} onChange={e=>setEditingCommentContent(e.target.value)} className="w-full p-2 border rounded text-sm dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200"/>
+                      <textarea value={editingCommentContent} onChange={(e) => setEditingCommentContent(e.target.value)} className="w-full p-2 border rounded text-sm dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200" />
                       <div className="flex justify-end gap-2 text-xs">
                         <button onClick={() => handleUpdateComment(comment.id)} className="text-blue-600 dark:text-blue-400">保存</button>
                         <button onClick={() => setEditingCommentId(null)} className="text-slate-500 dark:text-slate-400">取消</button>
@@ -805,10 +709,10 @@ function Report() {
             })}
           </div>
           {totalPages > 1 && (
-            <div className="flex justify-between p-6 border-t border-slate-200 dark:border-slate-850">
-              <button onClick={() => setCommentPage(p => Math.max(1, p-1))} disabled={commentPage===1} className="text-sm disabled:opacity-50 dark:text-slate-400 dark:disabled:opacity-20">上一页</button>
+            <div className="flex justify-between p-6 border-t border-slate-200 dark:border-slate-800">
+              <button onClick={() => setCommentPage((p) => Math.max(1, p - 1))} disabled={commentPage === 1} className="text-sm disabled:opacity-50 dark:text-slate-400 dark:disabled:opacity-20">上一页</button>
               <span className="text-sm dark:text-slate-300">{commentPage} / {totalPages}</span>
-              <button onClick={() => setCommentPage(p => Math.min(totalPages, p+1))} disabled={commentPage===totalPages} className="text-sm disabled:opacity-50 dark:text-slate-400 dark:disabled:opacity-20">下一页</button>
+              <button onClick={() => setCommentPage((p) => Math.min(totalPages, p + 1))} disabled={commentPage === totalPages} className="text-sm disabled:opacity-50 dark:text-slate-400 dark:disabled:opacity-20">下一页</button>
             </div>
           )}
         </div>
@@ -822,27 +726,27 @@ function Report() {
 
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setShowModal(null)}>
-        <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[80vh] shadow-2xl flex flex-col dark:bg-slate-900 dark:border dark:border-slate-800" onClick={e => e.stopPropagation()}>
-          <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-850">
-            <h2 className="font-bold text-slate-800 flex items-center gap-2 dark:text-slate-100"><Zap size={20} className="text-yellow-600 dark:text-amber-500"/>我的解析</h2>
-            <button onClick={() => setShowModal(null)} className="p-1 hover:bg-slate-100 rounded-full dark:hover:bg-slate-800 dark:text-slate-400"><X size={20}/></button>
+        <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[80vh] shadow-2xl flex flex-col dark:bg-slate-900 dark:border dark:border-slate-800" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-800">
+            <h2 className="font-bold text-slate-800 flex items-center gap-2 dark:text-slate-100"><Zap size={20} className="text-yellow-600 dark:text-amber-500" />我的解析</h2>
+            <button onClick={() => setShowModal(null)} className="p-1 hover:bg-slate-100 rounded-full dark:hover:bg-slate-800 dark:text-slate-400"><X size={20} /></button>
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-3">
-            {userExplList.length === 0 ? <p className="text-center text-slate-400 dark:text-slate-500">暂无解析</p> : paginated.map(exp => {
+            {userExplList.length === 0 ? <p className="text-center text-slate-400 dark:text-slate-500">暂无解析</p> : paginated.map((exp) => {
               const normId = normalizeQuestionId(exp.questionId);
-              const isMaogai = normId.startsWith('MG-');
+              const badge = getSubjectBadge(normId);
               return (
                 <div key={exp.id} className="bg-indigo-50 border border-indigo-200 p-4 rounded-lg space-y-2 dark:bg-indigo-950/20 dark:border-indigo-900/30">
                   <div className="flex justify-between">
                     <p className="text-sm font-medium text-indigo-900 cursor-pointer hover:text-indigo-600 dark:text-indigo-300 dark:hover:text-indigo-400" onClick={() => { openQuestion(exp.questionId); setShowModal(null); }}>
-                      <span className={`px-1.5 py-0.5 rounded text-xs mr-2 font-bold ${isMaogai ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400'}`}>
-                        {isMaogai ? '毛概' : '创新创业'}
+                      <span className={`px-1.5 py-0.5 rounded text-xs mr-2 font-bold ${badge.cls}`}>
+                        {badge.label}
                       </span>
                       ID: {normId}
                     </p>
                     <span className="text-xs text-amber-600 dark:text-amber-500">👍 {exp.votes}</span>
                   </div>
-                  <div className="text-sm text-indigo-900 line-clamp-3 dark:text-indigo-200"><Markdown content={exp.content}/></div>
+                  <div className="text-sm text-indigo-900 line-clamp-3 dark:text-indigo-200"><Markdown content={exp.content} /></div>
                   <div className="flex justify-end gap-2 text-xs">
                     <button onClick={() => handleDeleteExplanation(exp.id)} className="text-red-600 dark:text-red-400">删除</button>
                   </div>
@@ -851,10 +755,10 @@ function Report() {
             })}
           </div>
           {totalPages > 1 && (
-            <div className="flex justify-between p-6 border-t border-slate-200 dark:border-slate-850">
-              <button onClick={() => setExplanationPage(p => Math.max(1, p-1))} disabled={explanationPage===1} className="text-sm disabled:opacity-50 dark:text-slate-400 dark:disabled:opacity-20">上一页</button>
+            <div className="flex justify-between p-6 border-t border-slate-200 dark:border-slate-800">
+              <button onClick={() => setExplanationPage((p) => Math.max(1, p - 1))} disabled={explanationPage === 1} className="text-sm disabled:opacity-50 dark:text-slate-400 dark:disabled:opacity-20">上一页</button>
               <span className="text-sm dark:text-slate-300">{explanationPage} / {totalPages}</span>
-              <button onClick={() => setExplanationPage(p => Math.min(totalPages, p+1))} disabled={explanationPage===totalPages} className="text-sm disabled:opacity-50 dark:text-slate-400 dark:disabled:opacity-20">下一页</button>
+              <button onClick={() => setExplanationPage((p) => Math.min(totalPages, p + 1))} disabled={explanationPage === totalPages} className="text-sm disabled:opacity-50 dark:text-slate-400 dark:disabled:opacity-20">下一页</button>
             </div>
           )}
         </div>
@@ -862,26 +766,15 @@ function Report() {
     );
   };
 
-  if (gateReason) {
+  if (!ready) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6 dark:bg-slate-950 transition-colors duration-300">
-        <div className="bg-white border border-slate-200 shadow-lg rounded-2xl p-6 w-full max-w-md space-y-4 text-center dark:bg-slate-900 dark:border-slate-800">
-          <AlertCircle className="mx-auto text-amber-500" size={32}/>
-          <div className="text-lg font-bold text-slate-800 dark:text-slate-100">访问受限</div>
-          <p className="text-slate-600 text-sm dark:text-slate-400">{gateReason}</p>
-          <button onClick={() => location.href='/'} className="w-full py-2.5 bg-slate-100 text-slate-700 rounded-xl font-bold dark:bg-slate-850 dark:text-slate-200 dark:hover:bg-slate-800">返回主页</button>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
+        <div className="flex items-center gap-2 text-slate-500 text-sm dark:text-slate-400"><RefreshCw className="animate-spin" size={16} /> 正在同步数据...</div>
       </div>
     );
   }
 
-  if (!ready) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
-      <div className="flex items-center gap-2 text-slate-500 text-sm dark:text-slate-400"><RefreshCw className="animate-spin" size={16}/> 正在同步数据...</div>
-    </div>
-  );
-
-  const currentSubjectObj = allSubjects.find(sub => sub.id === selectedSubject);
+  const currentSubjectObj = allSubjects.find((sub) => sub.id === selectedSubject);
 
   const activeBank = selectedSubject && selectedSubject.startsWith('custom_')
     ? (customBanks[selectedSubject] || {})
@@ -889,13 +782,13 @@ function Report() {
 
   const activeChapters = selectedSubject && selectedSubject.startsWith('custom_')
     ? (currentSubjectObj?.lectures || [])
-    : (selectedSubject === 'maogai' ? MAOGAI_CHAPTERS : selectedSubject === 'hgdmy-maogai' ? [{ id: 1, name: '全部题目' }] : selectedSubject === 'english-culture' ? ENGLISH_CULTURE_CHAPTERS : LECTURES);
+    : (selectedSubject === 'maogai' ? MAOGAO_CHAPTERS : selectedSubject === 'hgdmy-maogai' ? [{ id: 1, name: '全部题目' }] : selectedSubject === 'english-culture' ? ENGLISH_CULTURE_CHAPTERS : LECTURES);
 
   const nextModeMap = {
-    'system': 'light',
-    'light': 'dark',
-    'dark': 'auto',
-    'auto': 'system'
+    system: 'light',
+    light: 'dark',
+    dark: 'auto',
+    auto: 'system'
   };
 
   const getThemeIcon = () => {
@@ -919,26 +812,48 @@ function Report() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col dark:bg-slate-950 transition-colors duration-300">
       <div className="sticky top-0 bg-white border-b border-slate-200 z-10 px-4 py-3 flex items-center justify-between shadow-sm dark:bg-slate-900 dark:border-slate-800">
-        <button onClick={() => location.href='/'} className="p-2 -ml-2 text-slate-600 hover:bg-slate-50 rounded-full flex items-center gap-1 dark:text-slate-300 dark:hover:bg-slate-800">
+        <button onClick={() => { window.location.hash = '/'; }} className="p-2 -ml-2 text-slate-600 hover:bg-slate-50 rounded-full flex items-center gap-1 dark:text-slate-300 dark:hover:bg-slate-800">
           <ChevronLeft size={20} /> <span className="text-sm font-bold">返回主页</span>
         </button>
         <h1 className="font-bold text-slate-800 dark:text-slate-100">学习数据报表</h1>
-        
-        {/* 🌗 同步主题切换按钮 */}
-        <button onClick={() => {
-          const next = nextModeMap[themeMode] || 'system';
-          setThemeModeState(next);
-          setThemeMode(next);
-        }} className="p-2 text-slate-600 hover:bg-slate-50 rounded-full flex items-center justify-center dark:text-slate-300 dark:hover:bg-slate-800" title={getThemeTitle()}>
-          {getThemeIcon()}
-        </button>
+
+        <div className="flex items-center gap-1">
+          {currentUser && (
+            <button
+              onClick={async () => {
+                if (refreshingCloud) return;
+                setRefreshingCloud(true);
+                try {
+                  await loadReportBundle(true);
+                } finally {
+                  setRefreshingCloud(false);
+                }
+              }}
+              disabled={refreshingCloud}
+              className="p-2 text-slate-600 hover:bg-slate-50 rounded-full flex items-center justify-center dark:text-slate-300 dark:hover:bg-slate-800 disabled:opacity-50"
+              title="刷新云端数据"
+            >
+              <RefreshCw size={18} className={refreshingCloud ? 'animate-spin text-blue-500' : ''} />
+            </button>
+          )}
+          <button
+            onClick={() => {
+              const next = nextModeMap[themeMode] || 'system';
+              setThemeModeState(next);
+              setThemeMode(next);
+            }}
+            className="p-2 text-slate-600 hover:bg-slate-50 rounded-full flex items-center justify-center dark:text-slate-300 dark:hover:bg-slate-800"
+            title={getThemeTitle()}
+          >
+            {getThemeIcon()}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 max-w-3xl mx-auto w-full p-4 space-y-6">
-        
-        {/* ✅ 学科切换选项卡 (WOW 高级设计) */}
+        {/* 学科切换选项卡 */}
         <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 overflow-x-auto no-scrollbar dark:bg-slate-900 dark:border-slate-800">
-          {allSubjects.map(sub => (
+          {allSubjects.map((sub) => (
             <button
               key={sub.id}
               onClick={() => { setSelectedSubject(sub.id); setSelectedDate(null); }}
@@ -959,9 +874,12 @@ function Report() {
           <div className="text-xs font-semibold text-slate-500 px-2 dark:text-slate-400">选择学习记录日期 ({dates.length} 天)</div>
           <div className="overflow-x-auto no-scrollbar -mx-4 px-4">
             <div className="flex gap-2 w-max">
-              {dates.map(d => (
-                <button key={d} onClick={() => setSelectedDate(d)}
-                        className={`px-4 py-2 rounded-full text-sm font-bold transition-all border flex-shrink-0 ${selectedDate === d ? 'bg-blue-600 text-white border-blue-600 shadow-md dark:bg-blue-700 dark:border-blue-700' : 'bg-white text-slate-500 border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-800'}`}>
+              {dates.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setSelectedDate(d)}
+                  className={`px-4 py-2 rounded-full text-sm font-bold transition-all border flex-shrink-0 ${selectedDate === d ? 'bg-blue-600 text-white border-blue-600 shadow-md dark:bg-blue-700 dark:border-blue-700' : 'bg-white text-slate-500 border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-800'}`}
+                >
                   {d === new Date().toLocaleDateString() ? '今天' : d.split('/')[1] + '.' + d.split('/')[2]}
                 </button>
               ))}
@@ -991,9 +909,9 @@ function Report() {
         <div>
           <h3 className="text-slate-500 font-bold text-sm mb-3 ml-1 dark:text-slate-400">{currentSubjectObj?.shortName || currentSubjectObj?.name || '未知学科'} 章节统计</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {activeChapters.map(l => {
+            {activeChapters.map((l) => {
               const total = activeBank[l.id]?.length || 0;
-              const done = [...activeBrushed].filter(id => {
+              const done = [...activeBrushed].filter((id) => {
                 if (selectedSubject && selectedSubject.startsWith('custom_')) {
                   const qDetails = getQuestionDetails(id);
                   return qDetails && qDetails.category === l.name;
@@ -1001,19 +919,19 @@ function Report() {
                 if (selectedSubject === 'maogai' || selectedSubject === 'english-culture') {
                   const qDetails = getQuestionDetails(id);
                   return qDetails && qDetails.category === l.name;
-                } else if (selectedSubject === 'hgdmy-maogai') {
-                  return id.startsWith('HGD-MG-') || id.startsWith('HGD-MG');
-                } else {
-                  return id.startsWith(`L${l.id}-`);
                 }
+                if (selectedSubject === 'hgdmy-maogai') {
+                  return id.startsWith('HGD-MG-') || id.startsWith('HGD-MG');
+                }
+                return l.id === 99 ? id.startsWith('OLD-') : id.startsWith(`L${l.id}-`);
               }).length;
-              const pct = total ? Math.round((done/total)*100) : 0;
+              const pct = total ? Math.round((done / total) * 100) : 0;
               return (
                 <div key={l.id} className="bg-white border border-slate-200 p-4 rounded-xl flex items-center justify-between dark:bg-slate-900 dark:border-slate-800">
                   <div className="flex-1 mr-4">
                     <div className="font-bold text-slate-700 text-sm truncate dark:text-slate-300">{safeText(l.name.includes('：') ? l.name.split('：')[1] : l.name)}</div>
-                    <div className="mt-2 w-full bg-slate-100 h-1.5 rounded-full overflow-hidden dark:bg-slate-850">
-                      <div className="h-full bg-blue-500 rounded-full dark:bg-blue-600" style={{width: `${pct}%`}}></div>
+                    <div className="mt-2 w-full bg-slate-100 h-1.5 rounded-full overflow-hidden dark:bg-slate-800">
+                      <div className="h-full bg-blue-500 rounded-full dark:bg-blue-600" style={{ width: `${pct}%` }} />
                     </div>
                   </div>
                   <div className="text-right">
@@ -1028,22 +946,22 @@ function Report() {
 
         {/* 详细记录列表 */}
         <div className="bg-white border border-slate-200 rounded-[2rem] p-4 sm:p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 dark:text-slate-100"><Clock size={18}/> 详细做题记录</h3>
+          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 dark:text-slate-100"><Clock size={18} /> 详细做题记录</h3>
           <div className="space-y-4">
-            {dailyRecords.length === 0 ? <p className="text-center text-slate-400 py-8 dark:text-slate-500">本日暂无记录</p> : dailyRecords.map(h => (
-              <div key={h.id} onClick={() => openQuestion(h.questionId)} className="flex gap-3 pb-3 border-b border-slate-50 last:border-0 last:pb-0 cursor-pointer hover:bg-slate-50 p-2 -mx-2 rounded-lg transition-colors dark:border-slate-800 dark:hover:bg-slate-850">
+            {dailyRecords.length === 0 ? <p className="text-center text-slate-400 py-8 dark:text-slate-500">本日暂无记录</p> : dailyRecords.map((h) => (
+              <div key={h.id} onClick={() => openQuestion(h.questionId)} className="flex gap-3 pb-3 border-b border-slate-50 last:border-0 last:pb-0 cursor-pointer hover:bg-slate-50 p-2 -mx-2 rounded-lg transition-colors dark:border-slate-800 dark:hover:bg-slate-800/60">
                 <div className={`mt-0.5 ${h.isCorrect ? 'text-green-500' : 'text-red-500'}`}>
-                  {h.action==='memorize' ? <Eye size={18} className="text-purple-500 dark:text-purple-400"/> : (h.isCorrect ? <CheckCircle size={18} className="dark:text-green-400"/> : <XCircle size={18} className="dark:text-red-400"/>)}
+                  {h.action === 'memorize' ? <Eye size={18} className="text-purple-500 dark:text-purple-400" /> : (h.isCorrect ? <CheckCircle size={18} className="dark:text-green-400" /> : <XCircle size={18} className="dark:text-red-400" />)}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-slate-800 line-clamp-2 dark:text-slate-200">{safeText(h.questionTitle)}</div>
                   <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                    {h.action==='answer' && <span className={`px-1.5 py-0.5 rounded border ${h.isCorrect?'bg-green-50 border-green-200 text-green-700 dark:bg-green-950/20 dark:border-green-900/30 dark:text-green-450':'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/20 dark:border-red-900/30 dark:text-red-450'}`}>选 {safeText(h.userAnswer)}</span>}
-                    {h.action==='memorize' && <span className="text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100 dark:bg-purple-950/20 dark:border-purple-900/30 dark:text-purple-400">背题模式</span>}
+                    {h.action === 'answer' && <span className={`px-1.5 py-0.5 rounded border ${h.isCorrect ? 'bg-green-50 border-green-200 text-green-700 dark:bg-green-950/20 dark:border-green-900/30 dark:text-green-400' : 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/20 dark:border-red-900/30 dark:text-red-400'}`}>选 {safeText(h.userAnswer)}</span>}
+                    {h.action === 'memorize' && <span className="text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100 dark:bg-purple-950/20 dark:border-purple-900/30 dark:text-purple-400">背题模式</span>}
                     <span className="ml-auto text-slate-400 dark:text-slate-500">{formatDate(h.timestamp).split(' ')[1]}</span>
                   </div>
                 </div>
-                <ArrowRight size={16} className="self-center text-slate-300 dark:text-slate-650"/>
+                <ArrowRight size={16} className="self-center text-slate-300 dark:text-slate-600" />
               </div>
             ))}
           </div>
@@ -1052,28 +970,28 @@ function Report() {
 
       {viewingQuestion && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setViewingQuestion(null)}>
-          <div className="bg-white w-full max-w-7xl max-h-[90vh] overflow-y-auto rounded-3xl p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white w-full max-w-7xl max-h-[90vh] overflow-y-auto rounded-3xl p-6 shadow-2xl dark:bg-slate-900 dark:border dark:border-slate-800" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
-              <span className="text-xs px-2 py-1 bg-slate-100 text-slate-500 rounded">{safeText(viewingQuestion.id)}</span>
-              <button onClick={() => setViewingQuestion(null)} className="p-1 hover:bg-slate-100 rounded-full"><X size={20}/></button>
+              <span className="text-xs px-2 py-1 bg-slate-100 text-slate-500 rounded dark:bg-slate-800 dark:text-slate-400">{safeText(viewingQuestion.id)}</span>
+              <button onClick={() => setViewingQuestion(null)} className="p-1 hover:bg-slate-100 rounded-full dark:hover:bg-slate-800 dark:text-slate-400"><X size={20} /></button>
             </div>
-            <h3 className="text-lg font-bold text-slate-900 mb-6">{safeText(viewingQuestion.question)}</h3>
+            <h3 className="text-lg font-bold text-slate-900 mb-6 dark:text-slate-100">{safeText(viewingQuestion.question)}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-3">
                 {viewingQuestion.options.map((opt, i) => {
                   const isCorrect = viewingQuestion.rawAnswer.includes(i);
                   return (
-                    <div key={i} className={`p-3 rounded-xl border text-sm flex gap-3 ${isCorrect ? 'bg-green-50 border-green-200 text-green-800' : 'bg-white border-slate-100 text-slate-600'}`}>
-                      <span className={`font-bold ${isCorrect?'text-green-600':'text-slate-400'}`}>{['A','B','C','D','E'][i]}.</span>
+                    <div key={i} className={`p-3 rounded-xl border text-sm flex gap-3 ${isCorrect ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-950/20 dark:border-green-900/40 dark:text-green-200' : 'bg-white border-slate-100 text-slate-600 dark:bg-slate-800/50 dark:border-slate-700 dark:text-slate-300'}`}>
+                      <span className={`font-bold ${isCorrect ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500'}`}>{String.fromCharCode(65 + i)}.</span>
                       <span>{safeText(opt)}</span>
-                      {isCorrect && <CheckCircle size={16} className="ml-auto text-green-600"/>}
+                      {isCorrect && <CheckCircle size={16} className="ml-auto text-green-600 dark:text-green-400" />}
                     </div>
                   );
                 })}
               </div>
               <div className="space-y-4">
-                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
-                  <div className="flex items-center gap-2 mb-2 text-indigo-900 font-bold text-sm"><Zap size={16}/> 解析</div>
+                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 dark:bg-indigo-950/20 dark:border-indigo-900/30">
+                  <div className="flex items-center gap-2 mb-2 text-indigo-900 font-bold text-sm dark:text-indigo-300"><Zap size={16} /> 解析</div>
                   <Markdown content={safeText(viewingQuestion.explanation)} />
                 </div>
                 {renderUserExps(viewingQuestion.id)}

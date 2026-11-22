@@ -1,10 +1,10 @@
-/* eslint-disable no-unused-vars, no-undef, react-hooks/exhaustive-deps, no-empty */
+/* eslint-disable react-hooks/exhaustive-deps */
 /*
-* version: 5.2.2 (Cloudflare Migration)
+* version: 5.2.6 (Cloudflare Migration)
 * */
 import {useState, useEffect, useRef, useMemo} from 'react';
 import {flushSync} from 'react-dom';
-import {api} from './api'; //
+import {api} from './api';
 import localforage from 'localforage';
 import {
     BookOpen, CheckCircle, Brain, Settings,
@@ -13,7 +13,13 @@ import {
     Bookmark, Eye, TrendingUp, ThumbsUp, X, Star
 } from 'lucide-react';
 import {validateContent} from './contentFilter.js';
-import {parseEnglishCultureJson} from './maogaiParser';
+import {
+    parseEnglishCultureJson,
+    parseMaogaiJson,
+    parseHgdmyMaogaiJson,
+    parseExcelData,
+    parseOldFormatData
+} from './maogaiParser';
 import {Markdown} from './components/Markdown';
 import {LoginScreen} from './components/LoginScreen';
 import {QuestionDetailModal} from './components/QuestionDetailModal';
@@ -38,7 +44,6 @@ import {
     getBankCacheVersionKey,
     LECTURES,
     LEADERBOARD_LIMIT,
-    MAOGAO_CHAPTERS,
     SUBJECTS
 } from './config/quizConfig';
 import {formatDate} from './utils/date';
@@ -47,13 +52,22 @@ import {normalizeSet} from './utils/questionId';
 import {forceAppReload, isNewerVersion} from './utils/appUpdate';
 import {parseFillAnswer, gradeFill} from './utils/fillAnswer';
 import {
+    getCachedThread,
+    setCachedThread,
+    setCachedThreadsBatch,
+    invalidateReportBundleCache
+} from './utils/threadCache';
+import {
     loadMasterThreshold,
     saveMasterThreshold,
     normalizeCorrectStreaks,
     clampMasterThreshold,
     hasSeenAutoMasterNotice,
     markAutoMasterNoticeSeen,
-    clearAutoMasterNoticeSeen
+    clearAutoMasterNoticeSeen,
+    hasSeenAutoUnmasterNotice,
+    markAutoUnmasterNoticeSeen,
+    clearAutoUnmasterNoticeSeen
 } from './utils/mastery';
 import {getSubjectById, getSubjectChapterOptions} from './utils/subjectAdapter';
 import {
@@ -303,7 +317,6 @@ function App() {
     const [viewingRankQuestion, setViewingRankQuestion] = useState(null);
     // 统一管理评论和解析的状态：{ [questionId]: { comments: [], explanations: [] } }
     const [questionThread, setQuestionThread] = useState({});
-    const [showComments, setShowComments] = useState(false);
     const [showExplanationForm, setShowExplanationForm] = useState(false);
     const [newComment, setNewComment] = useState('');
     const [newExplanation, setNewExplanation] = useState('');
@@ -323,7 +336,6 @@ function App() {
             callback();
         }
     };
-    const [showEmailHint, setShowEmailHint] = useState(false);
     // 版本状态
     const [showUpdateModal, setShowUpdateModal] = useState(false);
     const [remoteVersionInfo, setRemoteVersionInfo] = useState({version: '', log: ''});
@@ -338,10 +350,15 @@ function App() {
         selectedValues: []
     });
     const selectorResolveRef = useRef(null);
-    // 批量发送题目状态策略
+    // 批量发送题目状态策略（随 sync-all 合并发送，攒够 40 题或切后台/定时同步时统一提交）
     const statsBuffer = useRef([]);
-    const BATCH_THRESHOLD = 30; // 攒够 30 题发一次
-    const FLUSH_INTERVAL = 300 * 1000; // 或者每 300 秒发一次
+    const BATCH_THRESHOLD = 40;
+    const VERSION_CHECK_INTERVAL = 12 * 60 * 60 * 1000;
+    const INITIAL_SYNC_COOLDOWN = 2 * 60 * 1000;
+    const HEARTBEAT_IDLE_LIMIT = 15 * 60 * 1000;
+    const lastActiveAtRef = useRef(Date.now());
+    const lastHeartbeatAtRef = useRef(0);
+    const inflightThreadIdsRef = useRef(new Set());
     // 统一处理 API 限制错误 (适配 Cloudflare 429 错误)
     const checkApiLimitError = (error) => {
         if (!error) return;
@@ -386,70 +403,116 @@ function App() {
         }
     };
     // ==========================================
-    // 🚀 优化逻辑 1: 登录 & 初始同步
-    // ==========================================
-    const handleLogin = async (username, password) => {
-        setAuthLoading(true);
-        try {
-            const res = await api.login(username, password);
-            setCurrentUser(res.user);
-            if (res.initialProgress) {
-                const p = res.initialProgress;
-                setBrushedIds(normalizeSet(p.brushedIds));
-                setMemorizedIds(normalizeSet(p.memorizedIds));
-                setMasteredIds(normalizeSet(p.masteredIds));
-                setWrongIds(normalizeSet(p.wrongIds));
-                setFavoriteIds(normalizeSet(p.favoriteIds));
-                setHistory(p.history || []);
-                if (res.onlineCount) setOnlineCount(res.onlineCount);
-                setSyncMsg("同步已完成");
-                setSyncStatus('success');
-            }
-        } catch (err) {
-            alert(err.message || "登录失败");
-        } finally {
-            setAuthLoading(false);
-        }
-    };
-    // ==========================================
-    // 🚀 优化逻辑 2: 聚合同步 (心跳 + 进度，仅在数据有变更且页面可见时触发)
+    // 🚀 优化逻辑 2: 多合一聚合同步 (心跳 + 进度双向同步 + 答题统计 + 版本检查)
     // ==========================================
     const progressDirtyRef = useRef(false);
+    const dirtyInitDoneRef = useRef(false);
+    const suppressDirtyRef = useRef(false);
     const hasInitialSyncRef = useRef(false);
-    const performGlobalSync = async (includeProgress = false) => {
-        if (!currentUser || !hydrated || apiLimitReached) return;
+    const latestSyncDataRef = useRef(null);
+
+    const applyRemoteVersion = (versionRes) => {
+        try {
+            localStorage.setItem('app_version_checked_at', String(Date.now()));
+        } catch {
+            // 忽略 localStorage 异常
+        }
+        if (versionRes && versionRes.success) {
+            const latestVersion = String(versionRes.value || versionRes.version || versionRes.data?.value || '').trim();
+            const changelog = versionRes.changelog || versionRes.data?.changelog || '修复了一些已知问题并提升了稳定性。';
+            if (isNewerVersion(latestVersion, CURRENT_APP_VERSION)) {
+                setRemoteVersionInfo({
+                    version: latestVersion,
+                    log: changelog
+                });
+                setShowUpdateModal(true);
+            }
+        }
+    };
+
+    const needsVersionCheck = () => {
+        try {
+            const lastChecked = Number(localStorage.getItem('app_version_checked_at') || 0);
+            return Date.now() - lastChecked >= VERSION_CHECK_INTERVAL;
+        } catch {
+            return false;
+        }
+    };
+
+    const performGlobalSync = async ({
+        includeProgress = false,
+        includeStats = false,
+        pullProgress = false,
+        checkVersion = false,
+        heartbeat = true,
+        keepalive = false
+    } = {}) => {
+        const snapshot = latestSyncDataRef.current;
+        if (!snapshot?.currentUser || !snapshot?.hydrated || snapshot?.apiLimitReached) return null;
+
         const shouldSendProgress = includeProgress && progressDirtyRef.current;
+        const pendingStats = includeStats && statsBuffer.current.length > 0
+            ? [...statsBuffer.current]
+            : null;
+
+        if (!shouldSendProgress && !pendingStats && !pullProgress && !checkVersion && !heartbeat) {
+            return null;
+        }
+
+        if (pendingStats) {
+            statsBuffer.current = [];
+        }
+
         const payload = {
-            heartbeat: true,
+            heartbeat,
+            pullProgress,
+            checkVersion,
+            stats: pendingStats,
             progress: shouldSendProgress ? {
-                brushedIds: Array.from(brushedIds).filter(id => id && !id.startsWith('custom_')),
-                memorizedIds: Array.from(memorizedIds).filter(id => id && !id.startsWith('custom_')),
-                masteredIds: Array.from(masteredIds).filter(id => id && !id.startsWith('custom_')),
-                wrongIds: Array.from(wrongIds).filter(id => id && !id.startsWith('custom_')),
-                favoriteIds: Array.from(favoriteIds).filter(id => id && !id.startsWith('custom_')),
-                history: history.filter(h => h && h.questionId && !h.questionId.startsWith('custom_')).slice(0, 500)
+                brushedIds: Array.from(snapshot.brushedIds).filter(id => id && !id.startsWith('custom_')),
+                memorizedIds: Array.from(snapshot.memorizedIds).filter(id => id && !id.startsWith('custom_')),
+                masteredIds: Array.from(snapshot.masteredIds).filter(id => id && !id.startsWith('custom_')),
+                wrongIds: Array.from(snapshot.wrongIds).filter(id => id && !id.startsWith('custom_')),
+                favoriteIds: Array.from(snapshot.favoriteIds).filter(id => id && !id.startsWith('custom_')),
+                history: snapshot.history.filter(h => h && h.questionId && !h.questionId.startsWith('custom_')).slice(0, 500)
             } : null
         };
+
         try {
-            if (shouldSendProgress) {
+            if (shouldSendProgress && !keepalive) {
                 setSyncStatus('uploading');
                 setSyncMsg("同步中...");
             }
-            const res = await api.request('/sync-all', 'POST', payload);
-            if (res.success) {
-                if (res.onlineCount) setOnlineCount(res.onlineCount);
+            const res = await api.syncAll(payload, keepalive ? { keepalive: true } : {});
+            if (res && res.success) {
+                if (res.onlineCount !== undefined) setOnlineCount(res.onlineCount);
+                if (heartbeat) lastHeartbeatAtRef.current = Date.now();
                 if (shouldSendProgress) {
                     progressDirtyRef.current = false;
-                    setSyncStatus('success');
-                    setSyncMsg("备份成功");
+                    if (!keepalive) {
+                        setSyncStatus('success');
+                        setSyncMsg("备份成功");
+                    }
+                }
+                if (pullProgress && res.progress) {
+                    await mergeCloudProgress(res.progress);
+                }
+                if (checkVersion && res.appVersion) {
+                    applyRemoteVersion(res.appVersion);
                 }
             }
+            return res;
         } catch (e) {
+            checkApiLimitError(e);
+            if (pendingStats && !keepalive) {
+                statsBuffer.current = [...pendingStats, ...statsBuffer.current];
+            }
             console.error("同步失败", e);
-            if (shouldSendProgress) {
+            if (shouldSendProgress && !keepalive) {
                 setSyncStatus('error');
                 setSyncMsg("同步失败");
             }
+            return null;
         }
     };
     // 初始化日夜模式监听器与时钟轮询（仅挂载时执行一次）
@@ -471,42 +534,172 @@ function App() {
     }, []); // ⚠️ 仅执行一次，手动切换时 setThemeMode 会直接调用 applyTheme
 
     useEffect(() => {
-        if (hydrated) progressDirtyRef.current = true;
-    }, [brushedIds, memorizedIds, masteredIds, wrongIds, favoriteIds, history]);
+        latestSyncDataRef.current = {
+            currentUser,
+            hydrated,
+            apiLimitReached,
+            brushedIds,
+            memorizedIds,
+            masteredIds,
+            wrongIds,
+            favoriteIds,
+            history
+        };
+    }, [currentUser, hydrated, apiLimitReached, brushedIds, memorizedIds, masteredIds, wrongIds, favoriteIds, history]);
+
+    useEffect(() => {
+        if (!hydrated) return;
+        if (!dirtyInitDoneRef.current) {
+            dirtyInitDoneRef.current = true;
+            return;
+        }
+        if (suppressDirtyRef.current) {
+            suppressDirtyRef.current = false;
+            return;
+        }
+        progressDirtyRef.current = true;
+    }, [brushedIds, memorizedIds, masteredIds, wrongIds, favoriteIds, history, hydrated]);
 
     useEffect(() => {
         if (!currentUser || !hydrated) return;
-        // 1. 首次水合完成时发送轻量心跳并静默拉取合并云端最新进度（避免未同步时旧设备覆盖云端）
+        // 1. 首次水合完成时用 1 次 /sync-all 合并完成：心跳 + 拉取云端进度 + 按需检查版本（短时刷新直接跳过）
         if (!hasInitialSyncRef.current) {
             hasInitialSyncRef.current = true;
-            performGlobalSync(false);
-            handleManualRestore(true);
+            let skipInitial = false;
+            try {
+                const lastInitial = Number(sessionStorage.getItem('last_initial_sync_at') || 0);
+                if (Date.now() - lastInitial < INITIAL_SYNC_COOLDOWN) {
+                    skipInitial = true;
+                }
+            } catch {
+                // 忽略 sessionStorage 异常
+            }
+            if (!skipInitial) {
+                try {
+                    sessionStorage.setItem('last_initial_sync_at', String(Date.now()));
+                } catch {
+                    // 忽略 sessionStorage 异常
+                }
+                performGlobalSync({
+                    heartbeat: true,
+                    pullProgress: true,
+                    checkVersion: needsVersionCheck()
+                });
+            }
         }
-        // 2. 开启 10 分钟一次的定时心跳/同步（后台标签页跳过，有未同步进度时才附带上传）
+
+        // 记录用户近期交互时间，长时挂机不再白发心跳
+        const markActive = () => {
+            lastActiveAtRef.current = Date.now();
+        };
+        window.addEventListener('pointerdown', markActive, { passive: true });
+        window.addEventListener('keydown', markActive, { passive: true });
+
+        // 2. 每 10 分钟定时检查：优先同步脏进度/答题统计，无变更且活跃时每 15 分钟发一次心跳
         const timer = setInterval(() => {
             if (typeof document !== 'undefined' && document.hidden) return;
-            performGlobalSync(true);
+            const hasDirty = progressDirtyRef.current || statsBuffer.current.length > 0;
+            if (hasDirty) {
+                performGlobalSync({ includeProgress: true, includeStats: true, heartbeat: true });
+                return;
+            }
+            const now = Date.now();
+            const recentlyActive = now - lastActiveAtRef.current < HEARTBEAT_IDLE_LIMIT;
+            const heartbeatDue = now - lastHeartbeatAtRef.current >= HEARTBEAT_IDLE_LIMIT;
+            if (recentlyActive && heartbeatDue) {
+                performGlobalSync({ includeProgress: false, includeStats: false, heartbeat: true });
+            }
         }, 10 * 60 * 1000);
-        return () => clearInterval(timer);
+
+        // 3. 切到后台或关闭页面时，用 keepalive 兜底提交未落盘的脏进度与统计
+        const flushOnLeave = () => {
+            if (progressDirtyRef.current || statsBuffer.current.length > 0) {
+                performGlobalSync({
+                    includeProgress: true,
+                    includeStats: true,
+                    heartbeat: false,
+                    keepalive: true
+                });
+            }
+        };
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') {
+                flushOnLeave();
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('pagehide', flushOnLeave);
+
+        return () => {
+            clearInterval(timer);
+            window.removeEventListener('pointerdown', markActive);
+            window.removeEventListener('keydown', markActive);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('pagehide', flushOnLeave);
+        };
     }, [currentUser, hydrated]);
     // ==========================================
-    // 🚀 优化逻辑 3: 聚合加载互动内容 (带 sessionStorage 缓存)
+    // 🚀 优化逻辑 3: 互动内容批量滑窗加载 + 2小时持久化缓存
     // ==========================================
     const isCustomQuestionId = (questionId) => String(questionId || '').startsWith('custom_');
-    const loadQuestionThread = async (questionId) => {
-        if (!questionId || !currentUser || isCustomQuestionId(questionId)) return;
-        if (questionThread[questionId]) return;
-        const cacheKey = `thread_cache_${questionId}`;
-        try {
-            const cachedRaw = sessionStorage.getItem(cacheKey);
-            if (cachedRaw) {
-                const cached = JSON.parse(cachedRaw);
-                if (cached && Date.now() - cached.ts < 15 * 60 * 1000 && cached.data) {
-                    setQuestionThread(prev => ({ ...prev, [questionId]: cached.data }));
-                    return;
-                }
+    const loadQuestionThreadsBatch = async (questionIds) => {
+        if (!currentUser || apiLimitReached) return;
+        const candidates = Array.from(
+            new Set((Array.isArray(questionIds) ? questionIds : []).filter((id) => id && !isCustomQuestionId(id)))
+        );
+        if (candidates.length === 0) return;
+
+        const cacheHits = {};
+        const missingIds = [];
+        for (const qid of candidates) {
+            if (questionThread[qid]) continue;
+            const cached = getCachedThread(qid);
+            if (cached) {
+                cacheHits[qid] = cached;
+            } else if (!inflightThreadIdsRef.current.has(qid)) {
+                missingIds.push(qid);
             }
-        } catch {}
+        }
+
+        if (Object.keys(cacheHits).length > 0) {
+            setQuestionThread((prev) => ({ ...prev, ...cacheHits }));
+        }
+
+        if (missingIds.length === 0) return;
+
+        const batch = missingIds.slice(0, 30);
+        batch.forEach((id) => inflightThreadIdsRef.current.add(id));
+        try {
+            const res = await api.batchGetThreads(batch);
+            const serverThreads = (res && typeof res.threads === 'object' && res.threads) ? res.threads : {};
+            const normalizedThreads = {};
+            for (const qid of batch) {
+                const entry = serverThreads[qid];
+                normalizedThreads[qid] = {
+                    comments: Array.isArray(entry?.comments) ? entry.comments : [],
+                    explanations: Array.isArray(entry?.explanations) ? entry.explanations : []
+                };
+            }
+            setCachedThreadsBatch(normalizedThreads);
+            setQuestionThread((prev) => ({ ...prev, ...normalizedThreads }));
+        } catch (e) {
+            checkApiLimitError(e);
+            console.error("批量加载互动内容失败", e);
+            const fallbackThreads = {};
+            for (const qid of batch) {
+                fallbackThreads[qid] = { comments: [], explanations: [] };
+            }
+            setQuestionThread((prev) => ({ ...prev, ...fallbackThreads }));
+        } finally {
+            batch.forEach((id) => inflightThreadIdsRef.current.delete(id));
+        }
+    };
+    const loadQuestionThread = async (questionId, force = false) => {
+        if (!questionId || !currentUser || isCustomQuestionId(questionId)) return;
+        if (!force) {
+            await loadQuestionThreadsBatch([questionId]);
+            return;
+        }
         try {
             const res = await api.request(`/thread/${questionId}`);
             const safeRes = (res && typeof res === 'object') ? res : {};
@@ -514,35 +707,13 @@ function App() {
                 comments: Array.isArray(safeRes.comments) ? safeRes.comments : [],
                 explanations: Array.isArray(safeRes.explanations) ? safeRes.explanations : []
             };
-            try {
-                sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: threadData }));
-            } catch {}
+            setCachedThread(questionId, threadData);
             setQuestionThread(prev => ({
                 ...prev,
                 [questionId]: threadData
             }));
         } catch (e) {
             console.error("加载互动内容失败", e);
-            // 未登录/鉴权失败时不应打断刷题流程，写入空线程以阻止重复请求
-            setQuestionThread(prev => ({
-                ...prev,
-                [questionId]: {
-                    comments: [],
-                    explanations: []
-                }
-            }));
-        }
-    };
-    // ✅ 改动：使用 api.batchRecord
-    const flushStats = async () => {
-        const payload = [...statsBuffer.current];
-        if (payload.length === 0) return;
-        statsBuffer.current = [];
-        try {
-            await api.batchRecord(payload);
-        } catch (e) {
-            checkApiLimitError(e);
-            console.error('批量统计发送失败', e);
         }
     };
     // 搜索功能状态
@@ -557,34 +728,6 @@ function App() {
         onlyFavorites: false
     });
     const [isSearchOpen, setIsSearchOpen] = useState(false);
-    // --- 核心工具函数：数据加载与防抖 ---
-    // 加载单题的评论和解析数据 (带缓存检查)
-    const loadThreadData = async (questionId) => {
-        if (!questionId || !currentUser || isCustomQuestionId(questionId)) return;
-        // 如果本地已有且不为空，暂时跳过（根据需要可增加过期时间策略）
-        if (questionThread[questionId]) return;
-        try {
-            const [comments, explanations] = await Promise.all([
-                api.getComments(questionId).catch(e => {
-                    console.warn(`Load comments failed for ${questionId}`, e);
-                    return [];
-                }),
-                api.getExplanations(questionId).catch(e => {
-                    console.warn(`Load explanations failed for ${questionId}`, e);
-                    return [];
-                })
-            ]);
-            setQuestionThread(prev => ({
-                ...prev,
-                [questionId]: {
-                    comments: Array.isArray(comments) ? comments : [],
-                    explanations: Array.isArray(explanations) ? explanations : []
-                }
-            }));
-        } catch (e) {
-            console.error(`Load thread failed for ${questionId}`, e);
-        }
-    };
     // --- 数据加载工具 ---
     const MAX_EXCEL_FILE_SIZE = 5 * 1024 * 1024;
     const EXCEL_PARSE_TIMEOUT = 10000;
@@ -628,328 +771,22 @@ function App() {
             }
         }
         return Promise.reject(new Error(`所有本地题库源均不可用: ${errors.join(' | ')}`));
-    }
-    // 新增：旧题库格式解析器
-    const parseOldFormatData = (rows, lectureId, lectureName) => {
-        const cleanRows = rows.filter(r => r && r.length > 0);
-        if (cleanRows.length === 0) return [];
-        let startIndex = 0;
-        const h = cleanRows[0];
-        // 简单判断表头
-        if (h && (String(h[0]).includes('目录') || String(h[1]).includes('题目类型'))) startIndex = 1;
-        const questions = [];
-        for (let i = startIndex; i < cleanRows.length; i++) {
-            const row = cleanRows[i];
-            // 防止空行
-            if (!row || row.length < 2) continue;
-            const categoryRaw = String(row[0] || "").trim();
-            const mainType = String(row[1] || "").trim();
-            const bigQ = String(row[2] || "").trim();
-            const subType = String(row[3] || "").trim();
-            const subQ = String(row[4] || "").trim();
-            const ansRaw = String(row[5] || "").trim();
-            const exp = String(row[6] || "").trim();
-            if (!subQ && !bigQ) continue;
-            let type = 'single';
-            const typeCheck = (mainType + subType);
-            if (/(多选|多项|多项选择)/.test(typeCheck)) type = 'multiple';
-            else if (/(判断|是非)/.test(typeCheck)) type = 'judgment';
-            // 填空题和大题特殊处理
-            const isFill = typeCheck.includes('填空');
-            const isBig = typeCheck.includes('大题') || mainType.includes('大题') || typeCheck.includes('简答') || mainType.includes('简答');
-            // 构造题干
-            let qText = subQ;
-            if (bigQ && bigQ !== subQ) {
-                if (!subQ) qText = bigQ;
-                else qText = `【背景】${bigQ}\n\n${subQ}`;
-            }
-            if (!qText && bigQ) qText = bigQ; // 只有大题题干的情况
-            if (!qText) qText = "题目内容缺失";
-            let options = [];
-            let rawAnswer = [];
-            if (isFill || isBig) {
-                // 填空题/简答题：将答案放在 Option A (index 11)
-                const fillAns = String(row[11] || "").trim(); // 尝试获取选项A作为答案
-                const explicitAns = fillAns || ansRaw; // 优先使用选项A，用户指出答案在这里
-                // 为了让用户能“翻卡片”看答案，构造一个“点击查看答案”的选项
-                options = [explicitAns || "（暂无标准答案，点击查看解析）"];
-                rawAnswer = [0];
-                if (isFill) type = 'fill';
-                else if (isBig) type = 'big';
-                else type = 'single'; // 兜底
-            } else if (type === 'judgment') {
-                // 判断
-                const optA = String(row[11] || "").trim();
-                const optB = String(row[12] || "").trim();
-                if (optA || optB) {
-                    if (optA) options.push(optA);
-                    if (optB) options.push(optB);
-                } else {
-                    options = ['正确', '错误'];
-                }
-                // 答案解析
-                if (/^[对TtA√Yes]/.test(ansRaw) || ansRaw === '正确') rawAnswer = [0];
-                else if (/^[错FfB×No]/.test(ansRaw) || ansRaw === '错误') rawAnswer = [1];
-                else {
-                    // 默认按 A=对 B=错
-                    if (ansRaw.toUpperCase() === 'A') rawAnswer = [0];
-                    else rawAnswer = [1];
-                }
-            } else {
-                // 单选/多选
-                const optIndices = [11, 12, 13, 14, 15, 16, 17, 18];
-                options = optIndices.map(idx => String(row[idx] || "").trim()).filter(Boolean);
-                if (options.length === 0) continue; // 没有选项
-                const normalized = ansRaw.toUpperCase().replace(/[^A-H]/g, '');
-                for (let char of normalized) {
-                    const idx = char.charCodeAt(0) - 65;
-                    if (idx >= 0 && idx < options.length) rawAnswer.push(idx);
-                }
-                rawAnswer.sort((a, b) => a - b);
-                if (type === 'single' && rawAnswer.length > 1) {
-                    type = 'multiple';
-                }
-            }
-            // Category精简: "/创新创业/第3讲" -> "第3讲"
-            let displayCat = categoryRaw;
-            if (displayCat.includes('/')) {
-                const parts = displayCat.split('/');
-                if (parts.length > 0) displayCat = parts[parts.length - 1];
-            }
-            if (!displayCat) displayCat = lectureName;
-            questions.push({
-                id: `OLD-${lectureId}-${i}`,
-                type,
-                question: qText,
-                options,
-                rawAnswer,
-                explanation: exp || "暂无解析",
-                category: displayCat,
-                lectureId: lectureId
-            });
-        }
-        return questions;
-    };
-    const parseExcelData = (rows, lectureId, lectureName) => {
-        const cleanRows = rows.filter(r => r && r.length > 0);
-        if (cleanRows.length === 0) return [];
-        const questions = [];
-        let startIndex = 0;
-        const headerStr = JSON.stringify(cleanRows[0]);
-        if (headerStr.includes("题型") || headerStr.includes("题干")) startIndex = 1;
-        for (let i = startIndex; i < cleanRows.length; i++) {
-            const row = cleanRows[i];
-            const typeRaw = String(row[0] || "").trim();
-            const content = String(row[1] || "").trim();
-            const answerRaw = String(row[2] || "").trim();
-            const explanation = String(row[3] || "").trim();
-            if (!content) continue;
-            let type = 'single';
-            if (/(多选|多项|多项选择)/.test(typeRaw)) type = 'multiple';
-            else if (/(判断|是非)/.test(typeRaw)) type = 'judgment';
-            let options = [];
-            let correctAnswers = [];
-            if (type === 'judgment') {
-                options = ['正确', '错误'];
-                if (/^[对TtA√]/.test(answerRaw)) correctAnswers = [0];
-                else if (/^[错FfB×]/.test(answerRaw)) correctAnswers = [1];
-                else correctAnswers = [0];
-            } else {
-                const optA = row[6];
-                const optB = row[7];
-                const optC = row[8];
-                const optD = row[9];
-                options = [optA, optB, optC, optD].map(v => String(v || '').trim()).filter(Boolean);
-                const normalizedAns = answerRaw.toUpperCase().replace(/[^A-E]/g, '');
-                for (let char of normalizedAns) {
-                    const idx = char.charCodeAt(0) - 65;
-                    if (idx >= 0 && idx < options.length) correctAnswers.push(idx);
-                }
-                if (type === 'single' && correctAnswers.length > 1) {
-                    type = 'multiple';
-                }
-            }
-            if (options.length === 0) continue;
-            questions.push({
-                id: `L${lectureId}-${i}`, type, question: content, options,
-                rawAnswer: correctAnswers.sort((a, b) => a - b),
-                explanation: explanation || "暂无解析",
-                category: lectureName, lectureId: lectureId
-            });
-        }
-        return questions;
-    };
-    const parseMaogaiJson = (data) => {
-        const chapters = {};
-        const chapterMap = {};
-        MAOGAO_CHAPTERS.forEach(ch => {
-            chapterMap[String(ch.id)] = ch.name;
-        });
-        const srcToChId = {};
-        srcToChId['0（题库更新时间:2025-5-6）'] = 1;
-        for (let i = 1; i <= 8; i++) srcToChId[String(i)] = i + 1;
-        for (const q of data) {
-            // 1. 兼容获取章节ID (带有200%防御性容灾以同时支持新版1-9及历史版1468等章节编号，彻底修复全部被归为导论的Bug)
-            let chId = 1;
-            if (q['章节ID'] !== undefined) {
-                const tempChId = Number(q['章节ID']);
-                if (tempChId > 0 && tempChId <= 9) {
-                    chId = tempChId;
-                } else {
-                    chId = (tempChId - 1467 > 0 && tempChId - 1467 <= 9) ? (tempChId - 1467) : 1;
-                }
-            } else {
-                const rawCh = String(q['来源章节请求'] || '0（题库更新时间:2025-5-6）');
-                chId = srcToChId[rawCh] || 1;
-            }
-            const chKey = String(chId);
-            if (!chapters[chKey]) chapters[chKey] = [];
-            let type = 'single';
-            const rawTypeName = String(q['题型名称'] || q['题型'] || '');
-            if (/(多选|多项|多项选择)/.test(rawTypeName) || rawTypeName === '2') {
-                type = 'multiple';
-            } else if (/(判断|是非)/.test(rawTypeName) || rawTypeName === '4') {
-                type = 'judgment';
-            } else if (rawTypeName.includes('填空') || rawTypeName === '7') {
-                type = 'fill';
-            } else {
-                type = 'single';
-            }
-            const optionsObj = q['选项'] || {};
-            let options = [];
-            let rawAnswer = [];
-            if (type === 'judgment') {
-                options = ['正确', '错误'];
-                const ans = String(q['正确答案'] || '').trim().toUpperCase();
-                if (/^(对|√|TRUE|T)$/.test(ans)) {
-                    rawAnswer = [0];
-                } else if (/^(错|×|FALSE|F)$/.test(ans)) {
-                    rawAnswer = [1];
-                } else if (ans === 'A') {
-                    // 毛概题库中 A/B 与“正确/错误”语义相反：A=错误，B=正确
-                    rawAnswer = [1];
-                } else if (ans === 'B') {
-                    rawAnswer = [0];
-                } else {
-                    rawAnswer = [0];
-                }
-            } else if (type === 'fill') {
-                options = [q['正确答案'] || ''];
-                rawAnswer = [0];
-            } else {
-                const keys = Object.keys(optionsObj).sort();
-                options = keys.map(k => optionsObj[k]);
-                const answerStr = q['正确答案'] || '';
-                const parts = answerStr.split('、').map(s => s.trim()).filter(Boolean);
-                if (parts.length > 0) {
-                    parts.forEach(ch => {
-                        const idx = keys.indexOf(ch);
-                        if (idx >= 0) rawAnswer.push(idx);
-                    });
-                }
-                if (rawAnswer.length === 0 && Array.isArray(q['原始answer'])) {
-                    rawAnswer = q['原始answer'];
-                }
-                if (type === 'single' && rawAnswer.length > 1) {
-                    type = 'multiple';
-                }
-            }
-            // 2. 智能规范化处理题目唯一 ID，兼容新旧格式，避免 "MG-MG-1" 错误拼写
-            const rawQId = String(q['题目ID'] || '');
-            let finalId = rawQId;
-            if (!rawQId.startsWith('MG-')) {
-                if (rawQId.startsWith('MG')) {
-                    finalId = 'MG-' + rawQId.substring(2);
-                } else {
-                    finalId = `MG-${rawQId}`;
-                }
-            }
-            chapters[chKey].push({
-                id: finalId,
-                type,
-                question: q['题干'] || '',
-                options,
-                rawAnswer: rawAnswer.sort((a, b) => a - b),
-                explanation: q['解析'] || '暂无解析',
-                category: chapterMap[chKey] || `第${chKey}章`,
-                lectureId: chId
-            });
-        }
-        return chapters;
-    };
-    const parseHgdmyMaogaiJson = (data) => {
-        const questions = data?.questions || data || [];
-        if (!Array.isArray(questions)) return { '1': [] };
-
-        const list = [];
-        for (let i = 0; i < questions.length; i++) {
-            const q = questions[i];
-            if (!q || !q.stem) continue;
-
-            let type = 'single';
-            if (q.type === 'multiple') type = 'multiple';
-            else if (q.type === 'judge') type = 'judgment';
-
-            let options = [];
-            let rawAnswer = [];
-
-            if (type === 'judgment') {
-                options = ['正确', '错误'];
-                rawAnswer = q.answer === true ? [0] : [1];
-            } else {
-                options = Array.isArray(q.options) ? q.options : [];
-                const ans = q.answer;
-                if (typeof ans === 'number') {
-                    rawAnswer = [ans];
-                } else if (Array.isArray(ans)) {
-                    rawAnswer = ans.filter(a => typeof a === 'number').sort((a, b) => a - b);
-                }
-            }
-
-            list.push({
-                id: `HGD-MG-${i + 1}`,
-                type,
-                question: q.stem || '',
-                options,
-                rawAnswer,
-                explanation: q.analysis || '暂无解析',
-                category: '全部题目',
-                lectureId: 1,
-            });
-        }
-
-        return { '1': list };
     };
     useEffect(() => {
+        // 已登录用户的版本检查已合并进 login 与首次 sync-all，此处仅负责游客端兜底检查
+        if (currentUser || apiLimitReached) return;
         const checkVersion = async () => {
-            if (apiLimitReached) return;
+            if (apiLimitReached || !needsVersionCheck()) return;
             try {
-                const lastChecked = Number(localStorage.getItem('app_version_checked_at') || 0);
-                if (Date.now() - lastChecked < 6 * 60 * 60 * 1000) return;
-                // 后端接口返回格式: { success: true, key: "app_version", value: "5.2.1", changelog: "..." }
-                const res = await api.request('/SystemConfig?key=app_version');
-                localStorage.setItem('app_version_checked_at', String(Date.now()));
-                if (res && res.success) {
-                    const latestVersion = String(res.value || res.version || res.data?.value || '').trim();
-                    const changelog = res.changelog || res.data?.changelog || '修复了一些已知问题并提升了稳定性。';
-                    // 只有当远程版本号高于本地 CURRENT_APP_VERSION 时才弹窗
-                    if (isNewerVersion(latestVersion, CURRENT_APP_VERSION)) {
-                        setRemoteVersionInfo({
-                            version: latestVersion,
-                            log: changelog
-                        });
-                        setShowUpdateModal(true);
-                    }
-                }
+                const res = await api.getSystemConfig('app_version');
+                applyRemoteVersion(res);
             } catch (e) {
-                // 静默处理，不打扰用户正常刷题
                 console.warn('[Version Check] 检查更新跳过:', e.message);
             }
         };
-        // 延迟 3 秒检查，避开首屏题库加载的高峰期
         const timer = setTimeout(checkVersion, 3000);
         return () => clearTimeout(timer);
-    }, [apiLimitReached]);
+    }, [currentUser, apiLimitReached]);
     // --- Hooks (本地数据加载) ---
     useEffect(() => {
         const loadLocal = async () => {
@@ -1018,7 +855,12 @@ function App() {
         await safeSet('custom_subjects_list', normalizeCustomSubjects(updated));
         await localforage.removeItem(getBankCacheKey(subjectId)).catch(console.warn);
         await localforage.removeItem(getBankCacheVersionKey(subjectId)).catch(console.warn);
-        try { localStorage.removeItem(getBankCacheKey(subjectId)); localStorage.removeItem(getBankCacheVersionKey(subjectId)); } catch {}
+        try {
+            localStorage.removeItem(getBankCacheKey(subjectId));
+            localStorage.removeItem(getBankCacheVersionKey(subjectId));
+        } catch {
+            // 忽略 localStorage 清理异常
+        }
         
         // 物理清理本地进度中该学科的题目
         const updatedBrushed = new Set(Array.from(brushedIds).filter(id => id && !id.startsWith(subjectId)));
@@ -1081,6 +923,7 @@ function App() {
                 try {
                     localStorage.removeItem('app_lastSession');
                 } catch {
+                    // 忽略 localStorage 清理异常
                 }
             }
         };
@@ -1102,11 +945,11 @@ function App() {
                                 await safeSet(getBankCacheVersionKey('innovation'), BANK_CACHE_VERSION);
                             }
                         }
-                        await localforage.removeItem(k).catch(() => {
-                        });
+                        await localforage.removeItem(k).catch(() => {});
                         try {
                             localStorage.removeItem(k);
                         } catch {
+                            // 忽略 localStorage 清理异常
                         }
                     }
                 }
@@ -1504,6 +1347,7 @@ function App() {
                 history: sanitizeCloudHistory(snapshot.history).slice(0, 500) // 限制长度
             });
             if (response && response.success) {
+                progressDirtyRef.current = false;
                 if (!silent) {
                     setSyncStatus('success');
                     setSyncMsg("备份成功");
@@ -1521,8 +1365,6 @@ function App() {
                 if (serverMsg.includes("邮箱")) {
                     displayMsg = "需验证邮箱";
                     alert("同步失败：\n" + serverMsg);
-                    setShowEmailHint(true);
-                    setTimeout(() => setShowEmailHint(false), 5000);
                 } else if (serverMsg.includes("速度过快") || serverMsg.includes("异常")) {
                     displayMsg = "被拦截";
                     alert("同步被拒绝：\n" + serverMsg);
@@ -1537,12 +1379,13 @@ function App() {
     // 如果您需要此功能，请在后端添加 GET 接口。
     const mergeCloudProgress = async (data) => {
         if (!data) return false;
-        let newBrushed = new Set(brushedIds);
-        let newMemorized = new Set(memorizedIds);
-        let newMastered = new Set(masteredIds);
-        let newWrong = new Set(wrongIds);
-        let newFavorite = new Set(favoriteIds);
-        let newHistory = [...history];
+        const latest = latestSyncDataRef.current;
+        let newBrushed = new Set(latest?.brushedIds || brushedIds);
+        let newMemorized = new Set(latest?.memorizedIds || memorizedIds);
+        let newMastered = new Set(latest?.masteredIds || masteredIds);
+        let newWrong = new Set(latest?.wrongIds || wrongIds);
+        let newFavorite = new Set(latest?.favoriteIds || favoriteIds);
+        let newHistory = [...(latest?.history || history)];
         const getArr = (v) => {
             if (Array.isArray(v)) return v;
             if (typeof v === 'string') {
@@ -1569,6 +1412,9 @@ function App() {
             const existingIds = new Set(newHistory.map(h => h.id));
             newHistory = [...cloudHistory.filter(h => !existingIds.has(h.id)), ...newHistory]
                 .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        }
+        if (!progressDirtyRef.current) {
+            suppressDirtyRef.current = true;
         }
         setBrushedIds(newBrushed);
         setMemorizedIds(newMemorized);
@@ -2035,6 +1881,7 @@ function App() {
         localStorage.removeItem('app_history');
         localStorage.removeItem('app_lastSession');
         clearAutoMasterNoticeSeen();
+        clearAutoUnmasterNoticeSeen();
         setAutoMasterNotice(null);
         
         setShowResetModal(false);
@@ -2073,7 +1920,7 @@ function App() {
         if (!lastSession) return;
         setQuestions(lastSession.questions);
         setCurrentIndex(lastSession.currentIndex);
-        setQuizConfig(lastSession.mode);
+        if (lastSession.quizConfig) setQuizConfig(lastSession.quizConfig);
         startMode(lastSession.mode);
         const restoredAnswers = lastSession.answerResults || {};
         const restoredSelections = lastSession.selectedByQuestion || {};
@@ -2153,8 +2000,7 @@ function App() {
         if (searchFilters.onlyFavorites) {
             results = results.filter(q => favoriteIds.has(q.id));
         }
-        if (!searchFilters.includeAnswered && !searchFilters.includeUnanswered) {
-        } else {
+        if (searchFilters.includeAnswered || searchFilters.includeUnanswered) {
             if (!searchFilters.includeAnswered) {
                 results = results.filter(q => !brushedIds.has(q.id));
             }
@@ -2165,27 +2011,7 @@ function App() {
         setSearchResults(results);
         setShowSearchResults(true);
     };
-    const clearSearch = () => {
-        setSearchKeyword('');
-        setSearchResults([]);
-        setShowSearchResults(false);
-    };
-    const startSearchQuiz = () => {
-        if (searchResults.length === 0) {
-            alert("没有搜索结果");
-            return;
-        }
-        setCurrentIndex(0);
-        setLastSession(null);
-        setQuestions([...searchResults]);
-        setAnswerResults({});
-        setSelectedByQuestion({});
-        setFillInputsByQuestion({});
-        setFillInputs([]);
-        startMode('quiz');
-        setShowSearchResults(false);
-    };
-    // ✅ 改动：提交问题结果 (推入缓冲池)
+    // ✅ 提交问题结果 (推入缓冲池，攒够 40 题随 sync-all 合并上报)
     const submitQuestionResult = async (questionId, isCorrect, questionTitle, category, userAnswer = '') => {
         if (questionId && questionId.startsWith('custom_')) return; // 自定义离线题库不提交结果
         if (!currentUser) return;
@@ -2197,7 +2023,7 @@ function App() {
             userAnswer
         });
         if (statsBuffer.current.length >= BATCH_THRESHOLD) {
-            await flushStats();
+            await performGlobalSync({ includeProgress: true, includeStats: true, heartbeat: true });
         }
     };
     const getQuestionDetails = (questionId) => {
@@ -2208,21 +2034,37 @@ function App() {
         }
         return null;
     };
-    // ✅ 改动：加载排行榜 (仅官方题库可用，带 5 分钟缓存)
+    // ✅ 改动：加载排行榜 (仅官方题库可用，带 30 分钟本地持久化缓存)
     const rankingCacheRef = useRef({});
+    const RANKING_CACHE_TTL = 30 * 60 * 1000;
     const loadWrongQuestionRanking = async (subjectId = selectedSubject, force = false) => {
         if (!subjectId || subjectId.startsWith('custom_')) {
             setWrongQuestionRanking([]);
             return;
         }
-        const cached = rankingCacheRef.current[subjectId];
-        if (!force && cached && Date.now() - cached.ts < 5 * 60 * 1000) {
-            setWrongQuestionRanking(cached.data);
-            return;
+        if (!force) {
+            const memCached = rankingCacheRef.current[subjectId];
+            if (memCached && Date.now() - memCached.ts < RANKING_CACHE_TTL) {
+                setWrongQuestionRanking(memCached.data);
+                return;
+            }
+            try {
+                const raw = localStorage.getItem(`app_ranking_cache_${subjectId}`);
+                if (raw) {
+                    const diskCached = JSON.parse(raw);
+                    if (diskCached && Date.now() - diskCached.ts < RANKING_CACHE_TTL && Array.isArray(diskCached.data)) {
+                        rankingCacheRef.current[subjectId] = diskCached;
+                        setWrongQuestionRanking(diskCached.data);
+                        return;
+                    }
+                }
+            } catch {
+                // 忽略本地排行榜缓存解析异常
+            }
         }
         setWrongQuestionRanking([]);
         try {
-            const result = await api.request(`/getWrongQuestionRanking?limit=${LEADERBOARD_LIMIT}&subject=${subjectId}`);
+            const result = await api.getWrongQuestionRanking(LEADERBOARD_LIMIT, subjectId, force);
             if (result && Array.isArray(result.ranking)) {
                 const parsedRanking = result.ranking
                     .filter(item => item && getQuestionSubjectId(item.questionId) === subjectId)
@@ -2230,7 +2072,13 @@ function App() {
                         ...item,
                         questionId: item.questionId
                     }));
-                rankingCacheRef.current[subjectId] = { ts: Date.now(), data: parsedRanking };
+                const cacheEntry = { ts: Date.now(), data: parsedRanking };
+                rankingCacheRef.current[subjectId] = cacheEntry;
+                try {
+                    localStorage.setItem(`app_ranking_cache_${subjectId}`, JSON.stringify(cacheEntry));
+                } catch {
+                    // 忽略 localStorage 异常
+                }
                 setWrongQuestionRanking(parsedRanking);
             }
         } catch (e) {
@@ -2320,17 +2168,24 @@ function App() {
         });
         setNewComment('');
         try {
-            // 发送请求
-            await api.postComment(questionId, commentPayload.content);
+            // 发送请求，直接用返回值原地替换 tempId，0 二次 GET
+            const res = await api.postComment(questionId, commentPayload.content);
             setSyncMsg('评论发布成功');
             setSyncStatus('success');
-            // 成功后重新拉取以获取真实 ID 和时间
-            // 这里可以不做全量拉取，但为了 ID 同步，简单起见重新拉取一次也无妨。
-            // 为了严格符合"不重复拉取"的要求，这里其实可以只保留 UI 状态，
-            // 但真实情况需要 ID 才能后续删除。这里折中：静默后台刷新一次 ID。
-            // 或者我们可以假设 api.postComment 返回了新 ID。如果 api 支持的话。
-            // 暂时强制刷新一次数据以确保一致性 (debounce 会过滤掉频繁操作)
-            await loadThreadData(questionId);
+            if (res?.comment) {
+                setQuestionThread(prev => {
+                    const thread = prev[questionId] || { comments: [], explanations: [] };
+                    const nextThread = {
+                        ...thread,
+                        comments: thread.comments.map(c => (c.id === tempId ? res.comment : c))
+                    };
+                    setCachedThread(questionId, nextThread);
+                    return { ...prev, [questionId]: nextThread };
+                });
+                invalidateReportBundleCache();
+            } else {
+                await loadQuestionThread(questionId, true);
+            }
         } catch (e) {
             console.error('发布评论失败:', e);
             setSyncMsg('评论发布失败');
@@ -2380,14 +2235,22 @@ function App() {
             setQuestionThread(prev => {
                 const thread = prev[questionId];
                 if (!thread) return prev;
+                const updatedThread = {
+                    ...thread,
+                    comments: thread.comments.map(c =>
+                        c.id === comment.id
+                            ? {
+                                ...c,
+                                likes: typeof result?.likes === 'number' ? result.likes : c.likes,
+                                liked: typeof result?.liked === 'boolean' ? result.liked : c.liked
+                            }
+                            : c
+                    )
+                };
+                setCachedThread(questionId, updatedThread);
                 return {
                     ...prev,
-                    [questionId]: {
-                        ...thread,
-                        comments: thread.comments.map(c =>
-                            c.id === comment.id ? {...c, likes: result.likes, liked: result.liked} : c
-                        )
-                    }
+                    [questionId]: updatedThread
                 };
             });
         } catch (e) {
@@ -2412,6 +2275,7 @@ function App() {
     const handleDeleteComment = async (questionId, comment) => {
         if (!currentUser || !comment?.id || comment.authorId !== currentUser.id) return;
         if (!window.confirm('确定删除这条评论吗？')) return;
+        const prevComments = questionThread[questionId]?.comments || [];
         // 乐观更新：直接移除
         setQuestionThread(prev => {
             const thread = prev[questionId];
@@ -2428,11 +2292,20 @@ function App() {
         setEditingCommentContent('');
         try {
             await api.request(`/comments/${comment.id}`, 'DELETE');
+            setQuestionThread(prev => {
+                const thread = prev[questionId];
+                if (thread) setCachedThread(questionId, thread);
+                return prev;
+            });
+            invalidateReportBundleCache();
         } catch (e) {
             console.error('删除评论失败', e);
             alert("删除失败，请重试");
-            // 恢复（需重新加载）
-            await loadThreadData(questionId);
+            setQuestionThread(prev => {
+                const thread = prev[questionId];
+                if (!thread) return prev;
+                return { ...prev, [questionId]: { ...thread, comments: prevComments } };
+            });
         }
     };
     const handleStartEditComment = (comment) => {
@@ -2450,6 +2323,7 @@ function App() {
             setSyncStatus('error');
             return;
         }
+        const prevComments = questionThread[questionId]?.comments || [];
         // 乐观更新
         setQuestionThread(prev => {
             const thread = prev[questionId];
@@ -2469,29 +2343,31 @@ function App() {
         setEditingCommentContent('');
         try {
             await api.request(`/comments/${originalId}`, 'PUT', {content});
+            setQuestionThread(prev => {
+                const thread = prev[questionId];
+                if (thread) setCachedThread(questionId, thread);
+                return prev;
+            });
+            invalidateReportBundleCache();
             setSyncStatus('success');
             setSyncMsg('评论已更新');
         } catch (e) {
             console.error('更新评论失败', e);
             setSyncStatus('error');
             setSyncMsg('更新失败');
-            await loadThreadData(questionId); // 这里回滚比较麻烦，直接重载
+            setQuestionThread(prev => {
+                const thread = prev[questionId];
+                if (!thread) return prev;
+                return { ...prev, [questionId]: { ...thread, comments: prevComments } };
+            });
         }
     };
     // 解析点赞
     const handleLikeExplanation = async (questionId, explanation) => {
         if (!currentUser || !explanation?.id) return;
         if (explanation.authorId && explanation.authorId === currentUser.id) return;
-        // 乐观更新
+        const prevExplanations = questionThread[questionId]?.explanations || [];
         const originalVotes = explanation.votes || 0;
-        // 注意：当前 API 可能没返回 liked 状态给 explanations 列表（需确认），假设有
-        // 如果没有 liked 字段，只能简单 +1
-        // 假设前端没有维护 'liked' 状态在 explanations 里，只能盲加
-        // 这里为稳妥起见，仍暂时使用重载，或者改进 API 返回结构。
-        // 按照用户要求 "不要重复拉取"，我们尝试手动修改本地。
-        // 由于不知道当前是“已赞”还是“未赞”（UserExplanation 数据结构如果不含 liked），
-        // 我们只能假设这是一个 toggle。但通常点赞 UI 需要 distinct visual state。
-        // 检查 loadUserExplanations 里的 api.getExplanations 返回，确实包含 liked。
         setQuestionThread(prev => {
             const thread = prev[questionId];
             if (!thread) return prev;
@@ -2513,19 +2389,31 @@ function App() {
             setQuestionThread(prev => {
                 const thread = prev[questionId];
                 if (!thread) return prev;
+                const updatedThread = {
+                    ...thread,
+                    explanations: thread.explanations.map(e =>
+                        e.id === explanation.id
+                            ? {
+                                ...e,
+                                votes: typeof result?.votes === 'number' ? result.votes : e.votes,
+                                liked: typeof result?.liked === 'boolean' ? result.liked : e.liked
+                            }
+                            : e
+                    )
+                };
+                setCachedThread(questionId, updatedThread);
                 return {
                     ...prev,
-                    [questionId]: {
-                        ...thread,
-                        explanations: thread.explanations.map(e =>
-                            e.id === explanation.id ? {...e, votes: result.votes, liked: result.liked} : e
-                        )
-                    }
+                    [questionId]: updatedThread
                 };
             });
         } catch (e) {
             console.error('解析点赞失败', e);
-            await loadThreadData(questionId); // 回滚
+            setQuestionThread(prev => {
+                const thread = prev[questionId];
+                if (!thread) return prev;
+                return { ...prev, [questionId]: { ...thread, explanations: prevExplanations } };
+            });
         }
     };
     // 提交解析
@@ -2562,17 +2450,39 @@ function App() {
         setNewExplanation('');
         setShowExplanationForm(false);
         try {
-            await api.postExplanation(questionId, expPayload.content);
+            const res = await api.postExplanation(questionId, expPayload.content);
             setSyncMsg('解析提交成功');
             setSyncStatus('success');
-            await loadThreadData(questionId); // 刷新以获取真实 ID
+            if (res?.explanation) {
+                setQuestionThread(prev => {
+                    const thread = prev[questionId] || { comments: [], explanations: [] };
+                    const nextThread = {
+                        ...thread,
+                        explanations: thread.explanations.map(e => (e.id === tempId ? res.explanation : e))
+                    };
+                    setCachedThread(questionId, nextThread);
+                    return { ...prev, [questionId]: nextThread };
+                });
+                invalidateReportBundleCache();
+            } else {
+                await loadQuestionThread(questionId, true);
+            }
         } catch (e) {
             console.error('提交解析失败:', e);
             alert("提交解析失败: " + (e.message || "未知错误"));
             setSyncMsg('解析提交失败');
             setSyncStatus('error');
-            // 回滚
-            await loadThreadData(questionId);
+            setQuestionThread(prev => {
+                const thread = prev[questionId];
+                if (!thread) return prev;
+                return {
+                    ...prev,
+                    [questionId]: {
+                        ...thread,
+                        explanations: thread.explanations.filter(item => item.id !== tempId)
+                    }
+                };
+            });
         }
     };
     const handleUpdateExplanation = async (questionId) => {
@@ -2585,6 +2495,7 @@ function App() {
             setSyncStatus('error');
             return;
         }
+        const prevExplanations = questionThread[questionId]?.explanations || [];
         setQuestionThread(prev => {
             const thread = prev[questionId];
             if (!thread) return prev;
@@ -2603,13 +2514,23 @@ function App() {
         setEditingExplanationContent('');
         try {
             await api.request(`/explanations/${originalId}`, 'PUT', {content});
+            setQuestionThread(prev => {
+                const thread = prev[questionId];
+                if (thread) setCachedThread(questionId, thread);
+                return prev;
+            });
+            invalidateReportBundleCache();
             setSyncStatus('success');
             setSyncMsg('解析已更新');
         } catch (e) {
             console.error('更新解析失败:', e);
             setSyncStatus('error');
             setSyncMsg('更新解析失败');
-            await loadThreadData(questionId);
+            setQuestionThread(prev => {
+                const thread = prev[questionId];
+                if (!thread) return prev;
+                return { ...prev, [questionId]: { ...thread, explanations: prevExplanations } };
+            });
         }
     };
     const renderUserExplanations = (questionId) => {
@@ -2678,34 +2599,6 @@ function App() {
             </div>
         );
     };
-    // // ✅ 改动：加载评论 (api.getComments)
-    // const loadQuestionComments = async (questionId) => {
-    //     try {
-    //         // api.getComments 返回数组，包含 liked 字段
-    //         const comments = await api.getComments(questionId);
-    //         if (Array.isArray(comments)) {
-    //             setQuestionComments(prev => ({...prev, [questionId]: comments}));
-    //         }
-    //     } catch (e) {
-    //         console.error('加载评论失败:', e);
-    //     }
-    // };
-    // ✅ 改动：加载解析 (api.getExplanations)
-    const loadUserExplanations = async (questionId) => {
-        if (!currentUser || isCustomQuestionId(questionId)) return;
-        try {
-            const explanations = await api.getExplanations(questionId);
-            if (Array.isArray(explanations)) {
-                setUserExplanations(prev => ({...prev, [questionId]: explanations}));
-            }
-        } catch (e) {
-            console.error('加载用户解析失败:', e);
-        }
-    };
-    const ensureExplanationsLoaded = (questionId) => {
-        if (!questionId || !currentUser || isCustomQuestionId(questionId)) return;
-        if (!userExplanations[questionId]) loadUserExplanations(questionId);
-    };
     const submitLocalNote = (questionId) => {
         const content = String(newComment || '').trim();
         if (!questionId || !content) return;
@@ -2751,7 +2644,7 @@ function App() {
             return [value];
         }
         if (typeof value === 'string') {
-            const letters = value.toUpperCase().match(/[A-E]/g);
+            const letters = value.toUpperCase().match(/[A-H]/g);
             if (letters?.length) {
                 return letters.map(ch => ch.charCodeAt(0) - 65);
             }
@@ -2776,17 +2669,22 @@ function App() {
                     setMasteredIds(prev => new Set(prev).add(questionId));
                     if (!wasAlreadyMastered && !hasSeenAutoMasterNotice()) {
                         markAutoMasterNoticeSeen();
-                        setAutoMasterNotice({ threshold: masterThreshold });
+                        setAutoMasterNotice({ type: 'master', threshold: masterThreshold });
                     }
                 }
             }
             setAnswerResults(prev => ({...prev, [questionId]: 'correct'}));
         } else {
+            const wasMastered = masteredIds.has(questionId);
             setMasteredIds(prev => {
                 const n = new Set(prev);
                 n.delete(questionId);
                 return n;
             });
+            if (wasMastered && !hasSeenAutoUnmasterNotice()) {
+                markAutoUnmasterNoticeSeen();
+                setAutoMasterNotice({ type: 'unmaster', threshold: masterThreshold });
+            }
             setCorrectStreaks(prev => {
                 if (!prev[questionId]) return prev;
                 const next = {...prev};
@@ -2808,7 +2706,7 @@ function App() {
         const isCorrect = correctSet.size === userSet.size && [...correctSet].every(x => userSet.has(x));
         const answerText = [...normalizedSelection]
             .sort((a, b) => a - b)
-            .map(i => ['A', 'B', 'C', 'D', 'E'][i])
+            .map(i => String.fromCharCode(65 + i))
             .join('');
         // 2. 更新基础交互状态
         setIsAnswered(true);
@@ -3204,6 +3102,11 @@ function App() {
                                         </div>
                                     </div>
                                 )}
+                                {bankStatus === 'error' && errorMsg && (
+                                    <div className="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs dark:bg-red-950/30 dark:border-red-900/40 dark:text-red-400">
+                                        {errorMsg}
+                                    </div>
+                                )}
                                 {bankStatus === 'ready' && (
                                     <div className="text-center">
                                         <button onClick={forceUpdateBank}
@@ -3534,9 +3437,22 @@ function App() {
                 setAuthError(null);
                 try {
                     const res = await api.loginWithProgress(username, password);
+                    hasInitialSyncRef.current = true;
+                    lastHeartbeatAtRef.current = Date.now();
+                    try {
+                        sessionStorage.setItem('last_initial_sync_at', String(Date.now()));
+                    } catch {
+                        // 忽略 sessionStorage 异常
+                    }
                     setCurrentUser(res.user);
                     if (res.initialProgress) {
                         await mergeCloudProgress(res.initialProgress);
+                    }
+                    if (res.onlineCount !== undefined) {
+                        setOnlineCount(res.onlineCount);
+                    }
+                    if (res.appVersion) {
+                        applyRemoteVersion(res.appVersion);
                     }
                     setShowLoginScreen(false);
                     setAuthLoading(false);
@@ -3547,37 +3463,35 @@ function App() {
             }}
         />
     );
-// ✅ 优化版：自动加载互动数据 (防抖 + 缓存检查)
+// ✅ 优化版：自动加载互动数据 (优先读 2 小时本地持久化缓存，未命中时防抖并以滑窗 30 题批量预取)
     useEffect(() => {
-        if (!questions.length) return;
+        if (!questions.length || !currentUser) return;
         const q = questions[currentIndex];
-        if (!q || !q.id) return;
-        // 💡 确定加载时机：背题模式直接加载，或者刷题模式已显示解析（答题后）
+        if (!q || !q.id || isCustomQuestionId(q.id)) return;
         const isMemorizeMode = currentMode === 'memorize';
         const shouldShowContent = isMemorizeMode || showExplanation;
         if (!shouldShowContent) return;
-        // 1. 💡 增加防抖 (Debounce)：防止快速翻题导致瞬间发出几十个请求
-        const timer = setTimeout(() => {
-            // 2. 💡 检查缓存：如果 questionThread 里已经有这道题的数据，就不再请求 API
-            if (!questionThread[q.id]) {
-                console.log(`[API] 正在拉取题目互动数据: ${q.id}`);
-                loadQuestionThread(q.id); // 统一拉取评论和用户解析
+
+        if (!questionThread[q.id]) {
+            const cached = getCachedThread(q.id);
+            if (cached) {
+                setQuestionThread((prev) => ({ ...prev, [q.id]: cached }));
+                return;
             }
-        }, 300); // 延迟 300ms，用户停留在某题才会加载
-        // 3. 清理定时器，如果用户在 300ms 内翻到下一题，上一个请求会被取消
+        }
+
+        const windowIds = questions
+            .slice(currentIndex, currentIndex + 30)
+            .map((item) => item?.id)
+            .filter((id) => id && !isCustomQuestionId(id) && !questionThread[id] && !getCachedThread(id));
+
+        if (windowIds.length === 0) return;
+
+        const timer = setTimeout(() => {
+            loadQuestionThreadsBatch(windowIds);
+        }, 300);
         return () => clearTimeout(timer);
-    }, [currentIndex, showExplanation, currentMode, questions.length]);
-// 💡 注意：这里移除了 questions 本身作为依赖，改用 length，防止无关变动触发
-    // 定时发送答题缓冲数据
-    useEffect(() => {
-        const timer = setInterval(() => {
-            if (statsBuffer.current.length > 0) flushStats();
-        }, FLUSH_INTERVAL);
-        return () => {
-            clearInterval(timer);
-            if (statsBuffer.current.length > 0) flushStats();
-        };
-    }, []);
+    }, [currentIndex, showExplanation, currentMode, questions.length, currentUser]);
     const renderQuestionDetailModal = () => (
         <QuestionDetailModal
             viewingRankQuestion={viewingRankQuestion}

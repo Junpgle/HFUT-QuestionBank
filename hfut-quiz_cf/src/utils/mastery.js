@@ -3,6 +3,7 @@ export const MIN_MASTER_THRESHOLD = 1;
 export const MAX_MASTER_THRESHOLD = 99;
 const MASTER_THRESHOLD_KEY = 'app_masterThreshold';
 const AUTO_MASTER_NOTICE_KEY = 'app_autoMasterNotified';
+const AUTO_UNMASTER_NOTICE_KEY = 'app_autoUnmasterNotified';
 
 export function hasSeenAutoMasterNotice() {
   try {
@@ -23,6 +24,30 @@ export function markAutoMasterNoticeSeen() {
 export function clearAutoMasterNoticeSeen() {
   try {
     localStorage.removeItem(AUTO_MASTER_NOTICE_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function hasSeenAutoUnmasterNotice() {
+  try {
+    return localStorage.getItem(AUTO_UNMASTER_NOTICE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markAutoUnmasterNoticeSeen() {
+  try {
+    localStorage.setItem(AUTO_UNMASTER_NOTICE_KEY, '1');
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function clearAutoUnmasterNoticeSeen() {
+  try {
+    localStorage.removeItem(AUTO_UNMASTER_NOTICE_KEY);
   } catch {
     // ignore storage errors
   }

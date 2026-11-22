@@ -1,7 +1,7 @@
-import { useRef } from 'react';
-import { CheckCircle, CheckSquare, Star, XCircle } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { CheckCircle, CheckSquare, Lightbulb, Star, XCircle } from 'lucide-react';
 import { getQuestionTypeBadgeClass, getQuestionTypeLabel } from '../utils/questionType';
-import { gradeFill, parseFillAnswer } from '../utils/fillAnswer';
+import { getFillHint, gradeFill, parseFillAnswer } from '../utils/fillAnswer';
 
 export function QuizQuestionPanel({
   currentQ,
@@ -17,8 +17,12 @@ export function QuizQuestionPanel({
   onFillSubmit,
 }) {
   const inputRefs = useRef([]);
+  const questionKey = currentQ?.id ?? currentQ?.question ?? '';
+  const [hintState, setHintState] = useState({ key: questionKey, count: 0 });
+  const hintCount = hintState.key === questionKey ? hintState.count : 0;
   const isFillQuiz = isQuiz && currentQ.type === 'fill';
   const blanks = isFillQuiz ? parseFillAnswer(currentQ.options?.[0], currentQ.question) : [];
+  const hintInfo = isFillQuiz ? getFillHint(blanks, hintCount) : { hints: [], revealedCount: 0, totalChars: 0, hasMore: false };
   const fillResult = isFillQuiz && isAnswered
     ? gradeFill(blanks.map((_, i) => fillInputs[i] || ''), blanks)
     : { isCorrect: false, perBlank: [] };
@@ -94,8 +98,42 @@ export function QuizQuestionPanel({
               </div>
             ))}
           </div>
+          {!isAnswered && hintInfo.revealedCount > 0 && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 animate-enter dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-200">
+              <div className="flex items-center gap-2 font-bold mb-1">
+                <Lightbulb size={16} className="text-amber-500 dark:text-amber-400 shrink-0" />
+                <span>提示（已显示 {hintInfo.revealedCount}/{hintInfo.totalChars} 个字符）</span>
+              </div>
+              <div className="space-y-1 font-mono text-sm sm:text-base tracking-wide">
+                {blanks.length === 1 ? (
+                  <div>{hintInfo.hints[0]}</div>
+                ) : (
+                  hintInfo.hints.map((h, idx) =>
+                    h ? <div key={idx}>{`填空${idx + 1}：${h}`}</div> : null
+                  )
+                )}
+              </div>
+            </div>
+          )}
           {!isAnswered && (
-            <div className="flex justify-end animate-enter pt-4">
+            <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 animate-enter pt-4">
+              <button
+                type="button"
+                onClick={() =>
+                  setHintState((prev) => ({
+                    key: questionKey,
+                    count: (prev.key === questionKey ? prev.count : 0) + 1,
+                  }))
+                }
+                disabled={!hintInfo.hasMore}
+                className={`w-full sm:w-auto px-5 py-3 rounded-xl font-bold border transition-all flex items-center justify-center gap-2
+                  ${hintInfo.hasMore
+                    ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/30 dark:border-amber-800/70 dark:text-amber-300 dark:hover:bg-amber-950/50'
+                    : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-600'}`}
+              >
+                <Lightbulb size={18} />
+                <span>{hintInfo.revealedCount === 0 ? '提示' : hintInfo.hasMore ? '再提示一个' : '已全部提示'}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => onFillSubmit?.()}

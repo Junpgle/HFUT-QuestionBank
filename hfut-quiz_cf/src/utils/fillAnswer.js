@@ -82,3 +82,47 @@ export const gradeFill = (userInputs, blanks) => {
 
   return { isCorrect: false, perBlank };
 };
+
+/**
+ * Compute progressive character hints for fill-in-the-blank answers.
+ * Whitespace characters are skipped when counting steps so every click reveals a visible character.
+ */
+export const getFillHint = (blanks, hintCount) => {
+  const safeBlanks = Array.isArray(blanks) && blanks.length > 0 ? blanks : [];
+  const targets = safeBlanks.map((accepted) => String(accepted?.[0] || '').trim());
+  const totalChars = targets.reduce((sum, text) => {
+    let count = 0;
+    for (const ch of text) {
+      if (!/\s/.test(ch)) count += 1;
+    }
+    return sum + count;
+  }, 0);
+
+  const clampedCount = Math.max(0, Math.min(hintCount, totalChars));
+  let remaining = clampedCount;
+
+  const hints = targets.map((text) => {
+    if (remaining <= 0 || !text) return '';
+    let nonSpaceSeen = 0;
+    let endIdx = 0;
+    const chars = Array.from(text);
+    for (let i = 0; i < chars.length; i++) {
+      if (!/\s/.test(chars[i])) {
+        nonSpaceSeen += 1;
+        endIdx = i + 1;
+        if (nonSpaceSeen >= remaining) {
+          break;
+        }
+      }
+    }
+    remaining -= nonSpaceSeen;
+    return chars.slice(0, endIdx).join('');
+  });
+
+  return {
+    hints,
+    revealedCount: clampedCount,
+    totalChars,
+    hasMore: clampedCount < totalChars,
+  };
+};

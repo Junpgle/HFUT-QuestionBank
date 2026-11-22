@@ -118,8 +118,9 @@ function App() {
                 lastBrushed = subjectHistory[0].timestamp;
             }
 
-            // 计算已刷题数
+            // 计算已刷题数与已掌握题数
             const brushedCount = Array.from(brushedIds).filter(id => id && getQuestionSubjectId(id) === s.id).length;
+            const masteredCount = Array.from(masteredIds).filter(id => id && getQuestionSubjectId(id) === s.id).length;
 
             // 计算总题数
             let totalCount = 0;
@@ -135,10 +136,11 @@ function App() {
                 ...s,
                 lastBrushedTime: lastBrushed,
                 brushedCount,
+                masteredCount,
                 totalCount
             };
         });
-    }, [customSubjects, history, brushedIds, customSubjectCounts]);
+    }, [customSubjects, history, brushedIds, masteredIds, customSubjectCounts]);
     const [showUploadModal, setShowUploadModal] = useState(false);
     const [showAiModal, setShowAiModal] = useState(false);
     const [showApiSettingsModal, setShowApiSettingsModal] = useState(false);

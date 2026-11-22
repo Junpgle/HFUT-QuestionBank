@@ -1,25 +1,25 @@
 import { useRef, useState } from 'react';
 import { AlertCircle, Copy, FileUp, Loader2, UploadCloud, Wand2, X } from 'lucide-react';
-import { parseCustomJson } from './CustomUploadModal.jsx';
-import { loadApiSettings } from './ApiSettingsModal.jsx';
+import { parseCustomJson } from './utils/customParser.js';
+import { loadApiSettings } from './utils/apiSettings.js';
 
 const extractJsonFromText = (text) => {
     const source = String(text || '').trim();
     if (!source) throw new Error('模型返回为空');
-    try { return JSON.parse(source); } catch (_) {}
+    try { return JSON.parse(source); } catch { /* ignore */ }
     const fenced = source.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
     if (fenced?.[1]) {
-        try { return JSON.parse(fenced[1]); } catch (_) {}
+        try { return JSON.parse(fenced[1]); } catch { /* ignore */ }
     }
     const firstBrace = source.indexOf('{');
     const lastBrace = source.lastIndexOf('}');
     if (firstBrace >= 0 && lastBrace > firstBrace) {
-        try { return JSON.parse(source.slice(firstBrace, lastBrace + 1)); } catch (_) {}
+        try { return JSON.parse(source.slice(firstBrace, lastBrace + 1)); } catch { /* ignore */ }
     }
     const firstBracket = source.indexOf('[');
     const lastBracket = source.lastIndexOf(']');
     if (firstBracket >= 0 && lastBracket > firstBracket) {
-        try { return JSON.parse(source.slice(firstBracket, lastBracket + 1)); } catch (_) {}
+        try { return JSON.parse(source.slice(firstBracket, lastBracket + 1)); } catch { /* ignore */ }
     }
     throw new Error('无法从模型输出中提取 JSON，请让模型仅输出 JSON');
 };
@@ -69,7 +69,7 @@ ${materialText || '（无资料，请基于创新创业基础常见知识点生�
         try {
             await navigator.clipboard.writeText(getPrompt());
             alert('提示词已复制');
-        } catch (_) {
+        } catch {
             setError('复制失败，请手动复制');
         }
     };
@@ -91,7 +91,7 @@ ${materialText || '（无资料，请基于创新创业基础常见知识点生�
                 text = await file.text();
             }
             setMaterialText(prev => prev ? `${prev}\n\n${text}` : text);
-        } catch (_) {
+        } catch {
             setError('资料读取失败，请上传 txt/md/json/csv/docx 文件');
         } finally {
             if (materialInputRef.current) materialInputRef.current.value = '';

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Brain, Rocket, Zap, BarChart3, ShieldCheck, Users,
     ChevronRight, Star, CheckCircle, ArrowRight,
@@ -7,7 +7,18 @@ import {
 
 const LandingPage = () => {
     const [scrolled, setScrolled] = useState(false);
-    const [userName, setUserName] = useState(null);
+    const [userName] = useState(() => {
+        try {
+            const raw = localStorage.getItem('user_info');
+            if (raw) {
+                const obj = JSON.parse(raw);
+                if (obj && obj.username) return obj.username;
+            }
+        } catch (e) {
+            console.warn('load current user failed', e);
+        }
+        return null;
+    });
 
     // 监听滚动以改变导航栏样式
     useEffect(() => {
@@ -16,21 +27,8 @@ const LandingPage = () => {
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
-    // 🟢 修改点：适配新的 Auth 系统，从 user_info 读取用户信息
-    useEffect(() => {
-        try {
-            const raw = localStorage.getItem('user_info');
-            if (raw) {
-                const obj = JSON.parse(raw);
-                // user_info 结构为 { id, username, email }
-                if (obj && obj.username) setUserName(obj.username);
-            }
-        } catch (e) {
-            console.warn('load current user failed', e);
-        }
-    }, []);
-
     const goApp = () => { window.location.hash = '#/'; };
+    const goRegister = () => { window.location.hash = '#/register'; };
     const goReport = () => { window.location.hash = '#/report'; };
     const scrollToSection = (id) => {
         const el = document.getElementById(id);
@@ -76,7 +74,7 @@ const LandingPage = () => {
                                 <button onClick={goApp} className="hidden md:block px-5 py-2.5 text-sm font-bold text-slate-600 hover:text-indigo-600 transition-colors">
                                     登录
                                 </button>
-                                <button onClick={() => window.open('register.html', '_blank')} className="px-5 py-2.5 bg-slate-900 text-white text-sm font-bold rounded-xl hover:bg-black hover:scale-105 transition-all shadow-lg shadow-slate-200 flex items-center gap-2">
+                                <button onClick={goRegister} className="px-5 py-2.5 bg-slate-900 text-white text-sm font-bold rounded-xl hover:bg-black hover:scale-105 transition-all shadow-lg shadow-slate-200 flex items-center gap-2">
                                     立即注册 <ArrowRight size={14} />
                                 </button>
                             </>
@@ -400,7 +398,7 @@ const LandingPage = () => {
                         <p className="text-indigo-100 text-lg md:text-xl mb-10 max-w-2xl mx-auto">
                             无需下载 App，打开浏览器即可开始使用。加入 HFUT CXCY Pro，让创新创业课程不再是负担。
                         </p>
-                        <button onClick={() => window.open('register.html', '_blank')} className="px-10 py-5 bg-white text-indigo-600 text-lg font-bold rounded-2xl hover:bg-indigo-50 hover:scale-105 transition-all shadow-xl flex items-center gap-2 mx-auto">
+                        <button onClick={goRegister} className="px-10 py-5 bg-white text-indigo-600 text-lg font-bold rounded-2xl hover:bg-indigo-50 hover:scale-105 transition-all shadow-xl flex items-center gap-2 mx-auto">
                             免费注册账号 <ChevronRight size={20} />
                         </button>
                         <p className="mt-6 text-indigo-200 text-sm opacity-80">
@@ -469,7 +467,8 @@ const LandingPage = () => {
 
 // --- 子组件 ---
 
-const FeatureCard = ({ icon: Icon, color, title, desc }) => {
+const FeatureCard = ({ icon, color, title, desc }) => {
+    const IconComponent = icon;
     const colorClasses = {
         indigo: "bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white",
         rose: "bg-rose-50 text-rose-600 group-hover:bg-rose-600 group-hover:text-white",
@@ -482,7 +481,7 @@ const FeatureCard = ({ icon: Icon, color, title, desc }) => {
     return (
         <div className="group p-8 rounded-[2rem] border border-slate-100 bg-slate-50/50 hover:bg-white hover:shadow-xl hover:shadow-slate-200 transition-all duration-300 hover:-translate-y-1">
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-6 transition-colors duration-300 ${colorClasses[color]}`}>
-                <Icon size={28} />
+                <IconComponent size={28} />
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-3">{title}</h3>
             <p className="text-slate-500 leading-relaxed text-sm">{desc}</p>

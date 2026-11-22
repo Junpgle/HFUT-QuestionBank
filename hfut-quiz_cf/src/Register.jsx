@@ -1,64 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { UserPlus, Mail, Loader2, ArrowLeft, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
-
-// --- API 基础配置 ---
-const API_BASE = 'https://worker.junpgle.me/api';
-
-const api = {
-    async request(endpoint, method = 'GET', body = null) {
-        const headers = { 'Content-Type': 'application/json' };
-        const token = localStorage.getItem('auth_token');
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        try {
-            const res = await fetch(`${API_BASE}${endpoint}`, {
-                method,
-                headers,
-                body: body ? JSON.stringify(body) : null
-            });
-
-            if (res.status === 401) {
-                localStorage.removeItem('auth_token');
-                localStorage.removeItem('user_info');
-                return null;
-            }
-
-            const responseText = await res.text();
-            let data;
-            try {
-                data = JSON.parse(responseText);
-            } catch (e) {
-                if (!res.ok) {
-                    throw new Error(`[${res.status}] ${responseText || '接口不存在或服务器异常'}`);
-                }
-                return responseText;
-            }
-
-            if (!res.ok) {
-                throw new Error(data.error || `请求失败 (${res.status})`);
-            }
-            return data;
-        } catch (err) {
-            console.error('API Error:', err.message);
-            throw err;
-        }
-    },
-
-    async register(username, password, email) {
-        return await this.request('/register', 'POST', { username, password, email });
-    },
-
-    async verifyEmail(email, code) {
-        return await this.request('/verify-email', 'POST', { email, code });
-    },
-
-    logout() {
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user_info');
-        window.location.hash = "/";
-        window.location.reload();
-    }
-};
+import { api } from './api';
 
 const Register = () => {
     const [step, setStep] = useState(1);
@@ -131,7 +73,7 @@ const Register = () => {
                         {step === 1 ? '注册新账号' : '验证您的邮箱'}
                     </h1>
                     <p className="text-slate-400 text-sm mt-1">
-                        {step === 1 ? 'HFUT 创新创业题库' : `验证码已发送至 ${formData.email}`}
+                        {step === 1 ? 'HFUT 刷题系统' : `验证码已发送至 ${formData.email}`}
                     </p>
                 </div>
 

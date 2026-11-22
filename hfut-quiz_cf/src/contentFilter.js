@@ -89,7 +89,7 @@ export function filterContent(text) {
 
     let filteredText = text;
 
-    for (const { original, pattern } of PROFANITY_PATTERNS) {
+    for (const { pattern } of PROFANITY_PATTERNS) {
         // 重置 lastIndex 确保 replace 正常工作
         pattern.lastIndex = 0;
 

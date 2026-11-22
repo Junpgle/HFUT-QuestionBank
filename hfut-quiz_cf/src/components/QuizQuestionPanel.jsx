@@ -393,7 +393,7 @@ export function QuizQuestionPanel({
                     ${status === 'wrong' ? 'bg-red-500 border-red-500 text-white dark:bg-red-600 dark:border-red-600' : ''}
                     ${status === 'default' || status === 'dimmed' ? 'bg-white border-slate-300 text-slate-500 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400' : ''}`}
                   >
-                    {['A', 'B', 'C', 'D', 'E'][idx]}
+                    {String.fromCharCode(65 + idx)}
                   </div>
                   <span className="flex-1 text-sm sm:text-base md:text-lg leading-snug">{opt}</span>
                   {status === 'correct' && <CheckCircle className="text-green-500 shrink-0 w-5 h-5 md:w-6 md:h-6 dark:text-green-400" />}

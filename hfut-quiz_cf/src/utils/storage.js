@@ -14,7 +14,9 @@ export const safeGet = async (key, fallback = null) => {
       if (isLargeDataKey(key)) {
         try {
           localStorage.removeItem(key);
-        } catch (e) {}
+        } catch {
+          // 忽略隐私模式或配额清理异常
+        }
       }
       return v;
     }
@@ -58,7 +60,9 @@ export const safeSet = async (key, value) => {
   if (isLargeDataKey(key)) {
     try {
       localStorage.removeItem(key);
-    } catch (e) {}
+    } catch {
+      // 忽略隐私模式或配额清理异常
+    }
   } else {
     try {
       localStorage.setItem(key, JSON.stringify(value));

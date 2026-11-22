@@ -66,7 +66,7 @@ export function QuestionDetailModal({ viewingRankQuestion, onClose, renderUserEx
           <div className="space-y-3 mb-6">
             {options.map((opt, i) => {
               const isCorrect = rawAnswer.includes(i);
-              const optionLetter = ['A', 'B', 'C', 'D', 'E'][i];
+              const optionLetter = String.fromCharCode(65 + i);
               const optionStats = rankInfo?.optionStats || {};
               const selectionCount = optionStats[optionLetter] || 0;
               const totalSelections = Object.values(optionStats).reduce((sum, count) => sum + count, 0);

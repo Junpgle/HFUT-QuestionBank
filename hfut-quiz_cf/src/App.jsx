@@ -2693,7 +2693,7 @@ function App() {
         }
         return [];
     };
-    const applyResultStats = (questionId, isCorrect) => {
+    const applyResultStats = (questionId, isCorrect, {countMastered = true} = {}) => {
         setBrushedIds(prev => new Set(prev).add(questionId));
         if (isCorrect) {
             setWrongIds(prev => {
@@ -2701,7 +2701,9 @@ function App() {
                 n.delete(questionId);
                 return n;
             });
-            setMasteredIds(prev => new Set(prev).add(questionId));
+            if (countMastered) {
+                setMasteredIds(prev => new Set(prev).add(questionId));
+            }
             setAnswerResults(prev => ({...prev, [questionId]: 'correct'}));
         } else {
             setMasteredIds(prev => {
@@ -2746,7 +2748,7 @@ function App() {
             timestamp: new Date().toISOString(),
         }, ...prev]);
     };
-    const submitFillAnswer = () => {
+    const submitFillAnswer = ({usedHint = false} = {}) => {
         if (isAnswered) return;
         const currentQ = questions[currentIndex];
         if (!currentQ) return;
@@ -2761,7 +2763,7 @@ function App() {
         setSelectedIndices([]);
         setSelectedByQuestion(prev => ({...prev, [currentQ.id]: []}));
         setShowExplanation(true);
-        applyResultStats(currentQ.id, isCorrect);
+        applyResultStats(currentQ.id, isCorrect, {countMastered: !usedHint});
         submitQuestionResult(currentQ.id, isCorrect, currentQ.question, currentQ.category, answerText.slice(0, 60));
         setHistory(prev => [{
             id: Date.now(),

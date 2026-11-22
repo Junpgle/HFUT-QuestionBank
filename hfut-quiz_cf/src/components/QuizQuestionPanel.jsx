@@ -77,7 +77,7 @@ export function QuizQuestionPanel({
                         if (idx < blanks.length - 1) {
                           inputRefs.current[idx + 1]?.focus();
                         } else if (!isAnswered) {
-                          onFillSubmit?.();
+                          onFillSubmit?.({ usedHint: hintInfo.revealedCount > 0 });
                         }
                       }
                     }}
@@ -136,7 +136,7 @@ export function QuizQuestionPanel({
               </button>
               <button
                 type="button"
-                onClick={() => onFillSubmit?.()}
+                onClick={() => onFillSubmit?.({ usedHint: hintInfo.revealedCount > 0 })}
                 disabled={!hasAnyFillInput}
                 className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2
                   ${hasAnyFillInput ? 'bg-blue-600 text-white hover:bg-blue-700 hover:-translate-y-1' : 'bg-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-800 dark:text-slate-600'}`}
@@ -155,7 +155,11 @@ export function QuizQuestionPanel({
                 {fillResult.isCorrect
                   ? <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0" />
                   : <XCircle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0" />}
-                <span>{fillResult.isCorrect ? '回答正确' : '回答错误'}</span>
+                <span>
+                  {fillResult.isCorrect
+                    ? (hintInfo.revealedCount > 0 ? '回答正确（已使用提示，不计入掌握）' : '回答正确')
+                    : '回答错误'}
+                </span>
               </div>
               <div className="text-sm leading-relaxed space-y-1">
                 <div className="font-semibold">正确答案：</div>

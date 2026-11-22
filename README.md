@@ -1,192 +1,115 @@
-# 题库系统
+# HFUT 综合刷题系统 (v5.2.4)
 
-在线题库练习系统
+面向合肥工业大学课程的在线多科目刷题与背题系统，支持多题型练习、自定义题库导入、AI 出题、云端同步与社区共建解析。
+
+## 界面预览
+
+### 科目选择首页
+![科目选择首页](docs/images/home-subjects.jpg)
+
+### 刷题控制台
+![刷题控制台](docs/images/dashboard.jpg)
+
+### 全站易错榜与学习数据报表
+| 全站易错榜 | 学习数据报表 |
+| --- | --- |
+| ![全站易错榜](docs/images/ranking.png) | ![学习数据报表](docs/images/report.png) |
+
+### 上传自定义题库
+![上传自定义题库](docs/images/custom-upload.jpg)
 
 ## 主要功能
 
-### 核心功能
-- 📚 **题库练习** - 支持单选、多选、判断三种题型
-- 🧠 **背题模式** - 直接查看答案和解析，快速记忆
-- ❌ **错题本** - 自动记录错题，针对性复习
-- 📊 **数据统计** - 详细的学习进度和正确率统计
-- ☁️ **云端同步** - 登录后支持跨设备数据同步
-- 📱 **响应式设计** - 完美适配手机、平板和电脑
+### 核心刷题与学习
+- **多科目题库支持**：内置多门课程题库，支持一键切换科目与分章节练习
+- **多题型支持**：
+  - **单选题 / 多选题 / 判断题**
+  - **填空题**：支持真实输入框作答、多空与多等价答案匹配、大小写与标点容错；支持**逐字提示**（首次显示首单词首字母，每次点击多显示一个字符；使用提示后答对不计入「已掌握」）
+  - **简答题**
+- **多种练习模式**：
+  - **刷题模式**：支持按「全部 / 未做 / 错题 / 收藏」筛选，支持顺序或乱序
+  - **背题模式**：直接展示答案与解析，筛选「未做」时自动过滤已背题目
+  - **错题攻坚 / 收藏夹**：自动归集错题与收藏题目，支持针对性复习
+- **进度与数据报表**：本地 + 云端统计刷题数、掌握率与正确率，支持查看历史记录与数据报表
 
-### 新增功能 (v3.2.0)
+### 扩展与社区能力
+- **自定义题库上传**：支持解析 Excel（`.xlsx`/`.xls`）、Word（`.docx`）、文本/JSON 等格式的自定义题库
+- **AI 辅助出题**：支持配置自定义 OpenAI 兼容接口生成题目
+- **题库搜索与筛选**：支持按关键词、章节、题型与答题状态快速检索题目
+- **易错题排行榜**：按科目查看全站高频错题排行
+- **题目讨论与共建解析**：支持在题目下方发表评论、贡献解析与投票点赞
+- **外观与离线体验**：支持浅色 / 深色模式切换、响应式移动端适配、PWA 离线缓存与版本更新提醒
 
-#### 🔍 题库搜索功能 (NEW!)
-- **关键词搜索** - 在题目内容、选项和解析中快速查找
-- **高级筛选** - 按章节、题型、答题状态筛选
-- **智能匹配** - 不区分大小写，支持模糊匹配
-- **快速练习** - 直接从搜索结果开始练习
+## 内置题库
 
-#### 🏆 易错题排行榜
-- 查看全站最易错的题目
-- 了解常见错误和难点
-- 针对性加强练习
-
-#### 👥 用户共建解析
-- 为暂无解析的题目贡献解析
-- 查看其他用户的解析
-- 投票支持优质解析
-
-#### 💬 评论区
-- 对题目进行讨论
-- 分享解题思路
-- 交流学习心得
-
-## 章节内容
-
-系统包含以下7个讲次的题目：
-1. 第一讲：创新创业概述
-2. 第二讲：创新思维与方法
-3. 第三讲：机会与风险识别
-4. 第四讲：团队与资源整合
-5. 第五讲：商业模式与计划
-6. 第六讲：融资与企业设立
-7. 第七讲：新企业成长管理
+| 科目 | 章节/说明 | 数据文件 |
+| --- | --- | --- |
+| 创新创业 | 第一讲 ~ 第七讲 + 经典旧题库 | `questions/创新创业基础第一~七讲习题.xlsx`、`questions_old.xls` |
+| 毛泽东思想和中国特色社会主义理论体系概论 | 导论 + 第一章 ~ 第八章 | `questions/maogai_full.json` |
+| 合工大智慧马院-毛概 | 综合题库 | `hgdmy-maogai.json` |
+| 英语国家社会与文化 | 作业一 ~ 作业三（含多空填空题） | `questions/english-culture.json` |
 
 ## 技术栈
 
-- **前端框架**: React 19
-- **构建工具**: Vite 7
-- **样式**: Tailwind CSS 3
-- **图标**: Lucide React
-- **后端**: LeanCloud (BaaS)
-- **Excel解析**: XLSX.js
-- **本地存储**: LocalForage + LocalStorage
+- **前端 (`hfut-quiz_cf/`)**：React 19、Vite 7、Tailwind CSS 3、React Router 7、Lucide React、React Markdown、`vite-plugin-pwa`
+- **文档解析**：`xlsx`、`mammoth`、`jszip`
+- **本地存储**：LocalForage (IndexedDB) + LocalStorage
+- **后端 (`hfut-backend/`)**：Cloudflare Workers + Hono + Cloudflare D1 + Resend（原 LeanCloud 目录已废弃）
+
+## 目录结构
+
+```text
+HFUT---Innovation-and-Entrepreneurship-Question-Bank/
+├── hfut-quiz_cf/                 # 当前主前端项目（React + Vite + PWA）
+│   ├── src/
+│   │   ├── App.jsx               # 主应用与刷题状态管理
+│   │   ├── components/           # 题目面板、导航、搜索、更新弹窗等组件
+│   │   ├── config/quizConfig.js  # 版本号与科目/章节配置
+│   │   ├── utils/                # 填空判题/提示、题型、存储、更新工具
+│   │   ├── CustomUploadModal.jsx # 自定义题库导入
+│   │   ├── AIQuestionModal.jsx   # AI 出题弹窗
+│   │   ├── RankingPage.jsx       # 易错题排行榜
+│   │   └── Report.jsx            # 数据报表页
+│   └── package.json
+├── hfut-backend/                 # Cloudflare Workers + D1 后端服务
+│   ├── src/index.js
+│   ├── schema.sql
+│   └── wrangler.toml
+├── questions/                    # 题库数据文件
+├── hfut-quiz/                    # 旧版前端目录
+└── engine-project【Leancloud已废弃】/ # 已废弃的 LeanCloud 后端
+```
 
 ## 快速开始
 
-### 在线使用
-直接访问部署的网站即可使用，支持游客模式和登录模式。
+### 前端开发 (`hfut-quiz_cf`)
 
-### 本地开发
-
-1. 克隆仓库
 ```bash
 git clone https://github.com/Junpgle/HFUT---Innovation-and-Entrepreneurship-Question-Bank.git
-cd HFUT---Innovation-and-Entrepreneurship-Question-Bank/hfut-quiz
-```
+cd HFUT---Innovation-and-Entrepreneurship-Question-Bank/hfut-quiz_cf
 
-1. 安装依赖
-```bash
 npm install
+npm run dev      # 启动本地开发服务器
+npm run build    # 构建生产版本
+npm run preview  # 预览生产构建
 ```
 
-1. 启动开发服务器
+### 后端开发 (`hfut-backend`)
+
 ```bash
-npm run dev
+cd hfut-backend
+npm install
+npm run dev      # 启动 wrangler 本地调试
+npm run deploy   # 部署至 Cloudflare Workers
 ```
 
-1. 构建生产版本
-```bash
-npm run build
-```
+## 更新日志（近期）
 
-1. 预览生产构建
-```bash
-npm run preview
-```
+- **v5.2.3**：填空题新增逐字提示功能（每次点击多显示一个字符，使用提示后答对不计入掌握）
+- **v5.2.2**：修复更新检测并新增应用版本号展示
+- **v5.2.x**：上线真实填空题作答与判题、新增题目收藏功能、修复黑夜模式 Markdown 样式与易错榜跨科目过滤、优化背题模式「未做」筛选、新增英语国家社会与文化题库
 
-## 使用指南
+## 开发者与声明
 
-### 基本操作
-
-1. **开始练习**
-   - 选择章节（或综合练习）
-   - 设置题目数量
-   - 选择题型（单选/多选/判断/全部）
-   - 选择模式（随机/未做/错题）
-   - 点击"开始刷题"或"背题模式"
-
-2. **搜索题目** (NEW!)
-   - 在搜索框输入关键词
-   - 使用筛选器精确定位
-   - 点击结果开始练习
-
-3. **错题复习**
-   - 点击"错题攻坚"卡片
-   - 系统自动加载所有错题
-   - 随机打乱顺序练习
-
-4. **查看统计**
-   - 点击"数据报表"查看详细统计
-   - 了解学习进度和薄弱环节
-
-### 登录功能
-
-登录后可享受：
-- 云端数据备份
-- 跨设备同步
-- 社区互动（评论、贡献解析）
-- 易错题排行榜
-
-## 项目结构
-
-```
-hfut-quiz/
-├── src/
-│   ├── App.jsx          # 主应用组件
-│   ├── App.css          # 应用样式
-│   ├── main.jsx         # 应用入口
-│   └── index.css        # 全局样式
-├── public/              # 静态资源
-├── dist/                # 构建输出（gitignore）
-├── package.json         # 项目配置
-└── vite.config.js       # Vite配置
-```
-
-## 数据安全
-
-- 本地数据存储在浏览器的IndexedDB和LocalStorage中
-- 云端数据通过LeanCloud加密传输和存储
-- 支持手动备份和恢复
-- 可随时重置本地进度
-
-## 浏览器支持
-
-- Chrome/Edge (推荐)
-- Firefox
-- Safari
-- 移动端浏览器
-
-## 开发者
-
-- 主要开发者: Junpgle
-- GitHub: https://github.com/Junpgle
-
-## 许可证
-
-本项目仅供学习交流使用，请勿用于商业用途。
-
-## 更新日志
-
-### v3.2.0 (2026-01-12)
-- ✨ 新增题库搜索功能
-- ✨ 支持关键词匹配和高级筛选
-- 🎨 优化搜索结果展示
-- 📱 改进移动端体验
-
-### v3.1.0
-- 🏆 新增易错题排行榜
-- 👥 新增用户共建解析功能
-- 💬 新增题目评论区
-- 🔒 安全性增强
-
-### v3.0.0
-- 🎨 全新UI设计
-- ⚡ 性能优化
-- 📱 响应式布局改进
-- ☁️ 云端同步功能
-
-## 反馈与建议
-
-如有问题或建议，欢迎：
-1. 提交 GitHub Issue
-2. 发起 Pull Request
-3. 联系开发者
-
-## 鸣谢
-
-感谢所有为项目贡献代码和建议的开发者！
+- 主要开发者：[Junpgle](https://github.com/Junpgle)
+- 本项目仅供学习交流使用，请勿用于商业用途。

@@ -4,6 +4,7 @@ import { sign, verify } from 'hono/jwt'
 import bcrypt from 'bcryptjs'
 import { createHash } from 'node:crypto'
 import { Resend } from 'resend'
+import { registerSiteSyncRoutes } from './site-sync.js'
 
 const app = new Hono()
 
@@ -19,6 +20,7 @@ const getJwtSecret = (env) => {
 const allowedOrigins = new Set([
   'https://cxcy.junpgle.me',
   'https://qbank.junpgle.me',
+  'chrome-extension://ladgbknkfnbpmdfmjffhhbiajjceicip',
 ])
 
 function isLocalOrigin(origin) {
@@ -897,5 +899,8 @@ app.post('/api/secureSync', async (c) => {
 });
 
 app.post('/api/recoverOutageStats', async (c) => c.json({ success: true }));
+
+// Extension API uses the same /api/* JWT authentication as Question-Bank.
+registerSiteSyncRoutes(app);
 
 export default app

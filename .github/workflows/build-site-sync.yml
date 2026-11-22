@@ -1,0 +1,50 @@
+name: Build Question-Bank Worker for cloud sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - hfut-backend/**
+      - .github/workflows/build-site-sync.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: hfut-backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: hfut-backend
+        run: npm ci --no-audit --no-fund
+      - name: Validate backend syntax and sync isolation
+        working-directory: hfut-backend
+        run: |
+          node --check src/index.js
+          node --check src/site-sync.js
+          node --test src/site-sync.test.mjs
+      - name: Compile Worker without deploying production
+        working-directory: hfut-backend
+        run: npx wrangler deploy --dry-run --outdir .build
+      - name: Verify compiled Worker artifact
+        run: |
+          test -f hfut-backend/.build/index.js
+          grep -q "SiteSyncState" hfut-backend/.build/index.js
+          wc -c hfut-backend/.build/index.js
+      - name: Publish compiled script to deployment-only branch
+        run: |
+          mkdir -p hfut-backend/build
+          cp hfut-backend/.build/index.js hfut-backend/build/site-sync-worker.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C deploy/site-sync-bundle
+          git add -f hfut-backend/build/site-sync-worker.mjs
+          git commit -m "build: compiled Question-Bank Worker for site sync"
+          git push --force-with-lease origin HEAD:refs/heads/deploy/site-sync-bundle

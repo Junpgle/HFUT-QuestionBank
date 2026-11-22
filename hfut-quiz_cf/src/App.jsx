@@ -476,10 +476,11 @@ function App() {
 
     useEffect(() => {
         if (!currentUser || !hydrated) return;
-        // 1. 首次水合完成时仅发送一次轻量心跳获取在线人数（避免未变更时重复上传全量进度）
+        // 1. 首次水合完成时发送轻量心跳并静默拉取合并云端最新进度（避免未同步时旧设备覆盖云端）
         if (!hasInitialSyncRef.current) {
             hasInitialSyncRef.current = true;
             performGlobalSync(false);
+            handleManualRestore(true);
         }
         // 2. 开启 10 分钟一次的定时心跳/同步（后台标签页跳过，有未同步进度时才附带上传）
         const timer = setInterval(() => {
@@ -1473,7 +1474,7 @@ function App() {
         if (!currentUser) return;
         if (!silent) {
             const ok = window.confirm(
-                "将备份到云端的内容：\n- 创新创业/毛概/马院毛概的答题状态（已刷/已背/已掌握/错题）\n- 历史记录（最多500条）\n\n不会备份：\n- 自定义题库及其进度（仅保留本地）\n\n是否继续备份？"
+                "将备份到云端的内容：\n- 创新创业/毛概/马院毛概/英美文化的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录（最多500条）\n\n不会备份：\n- 自定义题库及其进度（仅保留本地）\n\n是否继续备份？"
             );
             if (!ok) return;
         }
@@ -1506,7 +1507,7 @@ function App() {
                 if (!silent) {
                     setSyncStatus('success');
                     setSyncMsg("备份成功");
-                    alert("备份完成：已将三套内置题库的答题状态与历史记录同步到云端；自定义题库未上传。");
+                    alert("备份完成：已将四套内置题库的答题状态与历史记录同步到云端；自定义题库未上传。");
                 }
             } else {
                 return Promise.reject(new Error(response ? response.message : "云端未返回成功状态"));
@@ -1534,11 +1535,63 @@ function App() {
         }
     };
     // 如果您需要此功能，请在后端添加 GET 接口。
+    const mergeCloudProgress = async (data) => {
+        if (!data) return false;
+        let newBrushed = new Set(brushedIds);
+        let newMemorized = new Set(memorizedIds);
+        let newMastered = new Set(masteredIds);
+        let newWrong = new Set(wrongIds);
+        let newFavorite = new Set(favoriteIds);
+        let newHistory = [...history];
+        const getArr = (v) => {
+            if (Array.isArray(v)) return v;
+            if (typeof v === 'string') {
+                try {
+                    return JSON.parse(v);
+                } catch {
+                    return [];
+                }
+            }
+            return [];
+        };
+        const cloudBrushed = itemsWithoutCustom(getArr(data.brushedIds));
+        const cloudMemorized = itemsWithoutCustom(getArr(data.memorizedIds));
+        const cloudMastered = itemsWithoutCustom(getArr(data.masteredIds));
+        const cloudWrong = itemsWithoutCustom(getArr(data.wrongIds));
+        const cloudFavorite = itemsWithoutCustom(getArr(data.favoriteIds));
+        const cloudHistory = getArr(data.history).filter(h => h && h.questionId && !String(h.questionId).startsWith('custom_'));
+        if (cloudBrushed.length) newBrushed = new Set([...newBrushed, ...cloudBrushed]);
+        if (cloudMemorized.length) newMemorized = new Set([...newMemorized, ...cloudMemorized]);
+        if (cloudMastered.length) newMastered = new Set([...newMastered, ...cloudMastered]);
+        if (cloudWrong.length) newWrong = new Set([...newWrong, ...cloudWrong]);
+        if (cloudFavorite.length) newFavorite = new Set([...newFavorite, ...cloudFavorite]);
+        if (cloudHistory.length) {
+            const existingIds = new Set(newHistory.map(h => h.id));
+            newHistory = [...cloudHistory.filter(h => !existingIds.has(h.id)), ...newHistory]
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        }
+        setBrushedIds(newBrushed);
+        setMemorizedIds(newMemorized);
+        setMasteredIds(newMastered);
+        setWrongIds(newWrong);
+        setFavoriteIds(newFavorite);
+        setHistory(newHistory);
+        await Promise.all([
+            safeSet('app_brushedIds', Array.from(newBrushed)),
+            safeSet('app_memorizedIds', Array.from(newMemorized)),
+            safeSet('app_masteredIds', Array.from(newMastered)),
+            safeSet('app_wrongIds', Array.from(newWrong)),
+            safeSet('app_favoriteIds', Array.from(newFavorite)),
+            safeSet('app_history', newHistory)
+        ]);
+        return true;
+    };
+
     const handleManualRestore = async (silent = false) => {
         if (!currentUser) return;
         if (!silent) {
             const ok = window.confirm(
-                "将从云端恢复的内容：\n- 创新创业/毛概/马院毛概的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录\n\n恢复方式：与本地合并去重，不会覆盖自定义题库。\n\n是否继续恢复？"
+                "将从云端恢复的内容：\n- 创新创业/毛概/马院毛概/英美文化的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录\n\n恢复方式：与本地合并去重，不会覆盖自定义题库。\n\n是否继续恢复？"
             );
             if (!ok) return;
         }
@@ -1547,71 +1600,19 @@ function App() {
             setSyncMsg("恢复中...");
         }
         try {
-            // 尝试从后端获取数据。如果后端未实现，此步会失败
-            // 建议在后端补充: app.get('/api/userProgress', ...)
-            // 这里假设接口存在
-            const result = await api.request('/userProgress');
+            const result = await api.request(`/userProgress?_t=${Date.now()}`);
             if (result && result.progress) {
-                const data = result.progress;
-                let newBrushed = new Set(brushedIds);
-                let newMemorized = new Set(memorizedIds);
-                let newMastered = new Set(masteredIds);
-                let newWrong = new Set(wrongIds);
-                let newFavorite = new Set(favoriteIds);
-                let newHistory = [...history];
-                // 解析 JSON (D1 中存的是 JSON 字符串，后端可能已解析或需前端解析)
-                // 假设后端返回的是对象
-                const getArr = (v) => {
-                    if (Array.isArray(v)) return v;
-                    if (typeof v === 'string') {
-                        try {
-                            return JSON.parse(v);
-                        } catch {
-                            return [];
-                        }
-                    }
-                    return [];
-                };
-                const cloudBrushed = itemsWithoutCustom(getArr(data.brushedIds));
-                const cloudMemorized = itemsWithoutCustom(getArr(data.memorizedIds));
-                const cloudMastered = itemsWithoutCustom(getArr(data.masteredIds));
-                const cloudWrong = itemsWithoutCustom(getArr(data.wrongIds));
-                const cloudFavorite = itemsWithoutCustom(getArr(data.favoriteIds));
-                const cloudHistory = getArr(data.history).filter(h => h && h.questionId && !String(h.questionId).startsWith('custom_'));
-                if (cloudBrushed.length) newBrushed = new Set([...newBrushed, ...cloudBrushed]);
-                if (cloudMemorized.length) newMemorized = new Set([...newMemorized, ...cloudMemorized]);
-                if (cloudMastered.length) newMastered = new Set([...newMastered, ...cloudMastered]);
-                if (cloudWrong.length) newWrong = new Set([...newWrong, ...cloudWrong]);
-                if (cloudFavorite.length) newFavorite = new Set([...newFavorite, ...cloudFavorite]);
-                if (cloudHistory.length) {
-                    const existingIds = new Set(newHistory.map(h => h.id));
-                    const merged = [...cloudHistory.filter(h => !existingIds.has(h.id)), ...newHistory]
-                        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                    newHistory = merged;
-                }
-                setBrushedIds(newBrushed);
-                setMemorizedIds(newMemorized);
-                setMasteredIds(newMastered);
-                setWrongIds(newWrong);
-                setFavoriteIds(newFavorite);
-                setHistory(newHistory);
-                await Promise.all([
-                    safeSet('app_brushedIds', Array.from(newBrushed)),
-                    safeSet('app_memorizedIds', Array.from(newMemorized)),
-                    safeSet('app_masteredIds', Array.from(newMastered)),
-                    safeSet('app_wrongIds', Array.from(newWrong)),
-                    safeSet('app_favoriteIds', Array.from(newFavorite)),
-                    safeSet('app_history', newHistory)
-                ]);
+                await mergeCloudProgress(result.progress);
                 if (!silent) {
                     setSyncStatus('success');
                     setSyncMsg("同步完成");
-                    alert("恢复完成：已从云端合并恢复三套内置题库的答题状态与历史记录；自定义题库未受影响。");
+                    alert("恢复完成：已从云端合并恢复四套内置题库的答题状态与历史记录；自定义题库未受影响。");
                 }
             } else {
                 if (!silent) {
                     setSyncMsg("无数据");
                     setSyncStatus(null);
+                    alert("云端暂无备份数据。\n请确认已在电脑端点击「备份」并提示成功，且手机端登录的是同一个账号。");
                 }
             }
         } catch (e) {
@@ -1619,6 +1620,7 @@ function App() {
             if (!silent) {
                 setSyncStatus('error');
                 setSyncMsg("失败");
+                alert("恢复失败：" + (e.message || "网络异常，请稍后重试"));
             }
         }
     };
@@ -3531,8 +3533,11 @@ function App() {
                 setAuthLoading(true);
                 setAuthError(null);
                 try {
-                    const user = await api.login(username, password);
-                    setCurrentUser(user);
+                    const res = await api.loginWithProgress(username, password);
+                    setCurrentUser(res.user);
+                    if (res.initialProgress) {
+                        await mergeCloudProgress(res.initialProgress);
+                    }
                     setShowLoginScreen(false);
                     setAuthLoading(false);
                 } catch (err) {

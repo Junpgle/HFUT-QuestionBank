@@ -25,41 +25,42 @@ export const api = {
             return inflightRequests.get(key);
         }
 
-        try {
-            const promise = (async () => {
-                const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : null });
+        const promise = (async () => {
+            const res = await fetch(url, {
+                method,
+                headers,
+                cache: 'no-store',
+                body: body ? JSON.stringify(body) : null
+            });
 
-                if (res.status === 401 && endpoint !== '/login') {
-                    this.logout();
-                    return null;
-                }
-
-                const responseText = await res.text();
-                let data;
-                try {
-                    data = JSON.parse(responseText);
-                } catch (e) {
-                    if (!res.ok) {
-                        throw new Error(`[${res.status}] ${responseText || '服务器路径不存在'}`);
-                    }
-                    return responseText;
-                }
-
-                if (!res.ok) {
-                    throw new Error(data.error || `请求失败 (状态码: ${res.status})`);
-                }
-                return data;
-            })();
-
-            if (method === 'GET') {
-                inflightRequests.set(key, promise);
-                promise.finally(() => inflightRequests.delete(key));
+            if (res.status === 401 && endpoint !== '/login') {
+                this.logout();
+                return null;
             }
 
-            return await promise;
-        } catch (err) {
-            throw err;
+            const responseText = await res.text();
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch {
+                if (!res.ok) {
+                    throw new Error(`[${res.status}] ${responseText || '服务器路径不存在'}`);
+                }
+                return responseText;
+            }
+
+            if (!res.ok) {
+                throw new Error(data.error || `请求失败 (状态码: ${res.status})`);
+            }
+            return data;
+        })();
+
+        if (method === 'GET') {
+            inflightRequests.set(key, promise);
+            promise.finally(() => inflightRequests.delete(key));
         }
+
+        return await promise;
     },
 
     // 2. 登录
@@ -70,6 +71,15 @@ export const api = {
             localStorage.setItem('user_info', JSON.stringify(data.user));
         }
         return data.user;
+    },
+
+    async loginWithProgress(username, password) {
+        const data = await this.request('/login', 'POST', { username, password });
+        if (data.token) {
+            localStorage.setItem('auth_token', data.token);
+            localStorage.setItem('user_info', JSON.stringify(data.user));
+        }
+        return data;
     },
 
     // 3. 注册 (对应后端 /api/register)

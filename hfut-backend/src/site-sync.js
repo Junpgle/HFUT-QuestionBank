@@ -13,7 +13,10 @@ function compare(a, b, ta='t') {
   if (!b) return 1;
   if (a[ta] !== b[ta]) return Math.sign(a[ta] - b[ta]);
   if (a.d !== b.d) return a.d < b.d ? -1 : 1;
-  return JSON.stringify(a).localeCompare(JSON.stringify(b));
+  // Match the client-side quiz tie order to avoid ping-pong updates.
+  if(ta==='t' && 'v' in a && 'v' in b) return String(a.v).localeCompare(String(b.v));
+  if(ta==='t' && 'disabled' in a && 'disabled' in b) return Number(a.disabled)-Number(b.disabled);
+  return 0;
 }
 function parseSnapshot(raw) {
   if (!own(raw)) return {records:{},reading:{},controls:{}};

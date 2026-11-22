@@ -48,7 +48,16 @@ import {
 } from './config/quizConfig';
 import {formatDate} from './utils/date';
 import {safeGet, safeSet} from './utils/storage';
-import {normalizeSet} from './utils/questionId';
+import {normalizeSet, getQuestionSubjectId} from './utils/questionId';
+import {
+    normalizeLastSession,
+    shouldPersistSession,
+    loadSubjectLastSession,
+    saveSubjectLastSession,
+    removeSubjectLastSession,
+    migrateLegacyLastSession,
+    clearAllLastSessions
+} from './utils/lastSession';
 import {forceAppReload, isNewerVersion} from './utils/appUpdate';
 import {parseFillAnswer, gradeFill} from './utils/fillAnswer';
 import {
@@ -77,20 +86,6 @@ import {
     initThemeListener,
     destroyThemeListener
 } from './utils/theme';
-
-const getQuestionSubjectId = (questionId) => {
-    const qid = String(questionId || '');
-    if (!qid) return null;
-    if (qid.startsWith('custom_')) {
-        const idx = qid.lastIndexOf('-Q');
-        return idx > 0 ? qid.slice(0, idx) : null;
-    }
-    if (qid.startsWith('ENG-CUL-')) return 'english-culture';
-    if (qid.startsWith('HGD-MG-')) return 'hgdmy-maogai';
-    if (qid.startsWith('MG-')) return 'maogai';
-    if (/^(OLD-|L\d+-)/.test(qid)) return 'innovation';
-    return 'innovation';
-};
 
 function App() {
     const initialUser = api.getCurrentUser();
@@ -174,7 +169,33 @@ function App() {
         const currentQs = Object.values(allQuestionBank).flat();
         return currentQs.filter(q => wrongIds.has(q.id)).length;
     }, [allQuestionBank, wrongIds]);
-    const [lastSession, setLastSession] = useState(null);
+    const [lastSessions, setLastSessions] = useState({});
+    const loadedSessionSubjectsRef = useRef(new Set());
+    const mutatedSessionSubjectsRef = useRef(new Set());
+    const sessionAutoSaveTimerRef = useRef(null);
+    const lastSession = selectedSubject ? (lastSessions[selectedSubject] || null) : null;
+
+    const setSubjectLastSession = (subjectId, session) => {
+        if (!subjectId) return;
+        if (sessionAutoSaveTimerRef.current) {
+            clearTimeout(sessionAutoSaveTimerRef.current);
+            sessionAutoSaveTimerRef.current = null;
+        }
+        const normalized = session ? normalizeLastSession(session, subjectId) : null;
+        loadedSessionSubjectsRef.current.add(subjectId);
+        mutatedSessionSubjectsRef.current.add(subjectId);
+        setLastSessions(prev => {
+            const next = { ...prev };
+            if (normalized) next[subjectId] = normalized;
+            else delete next[subjectId];
+            return next;
+        });
+        if (normalized) {
+            saveSubjectLastSession(subjectId, normalized).catch(console.error);
+        } else {
+            removeSubjectLastSession(subjectId).catch(console.error);
+        }
+    };
     const [hydrated, setHydrated] = useState(false);
 
     // 新增：根据当前选中学科加载的题库，实现对已掌握、已背诵、已刷过题目以及历史记录的 100% 精准学科隔离
@@ -806,8 +827,15 @@ function App() {
                 if (hist) setHistory(hist);
                 const notes = await safeGet('app_custom_notes', {});
                 if (notes && typeof notes === 'object') setCustomNotes(notes);
-                const sess = await safeGet('app_lastSession');
-                if (sess) setLastSession(sess);
+                const migratedSess = await migrateLegacyLastSession();
+                if (migratedSess?.subjectId) {
+                    loadedSessionSubjectsRef.current.add(migratedSess.subjectId);
+                    setLastSessions(prev => (
+                        mutatedSessionSubjectsRef.current.has(migratedSess.subjectId)
+                            ? prev
+                            : { ...prev, [migratedSess.subjectId]: migratedSess }
+                    ));
+                }
                 const customSubs = normalizeCustomSubjects(await safeGet('custom_subjects_list', []));
                 setCustomSubjects(customSubs);
 
@@ -883,7 +911,8 @@ function App() {
         setWrongIds(updatedWrong);
         setFavoriteIds(updatedFavorite);
         setHistory(updatedHistory);
-        
+        setSubjectLastSession(subjectId, null);
+
         if (selectedSubject === subjectId) {
             setSelectedSubject(null);
             setAllQuestionBank({});
@@ -916,20 +945,53 @@ function App() {
         if (hydrated) safeSet('app_custom_notes', customNotes);
     }, [customNotes, hydrated]);
     useEffect(() => {
-        if (!hydrated) return;
-        const save = async () => {
-            if (lastSession) await safeSet('app_lastSession', lastSession);
-            else {
-                await localforage.removeItem('app_lastSession').catch(console.warn);
-                try {
-                    localStorage.removeItem('app_lastSession');
-                } catch {
-                    // 忽略 localStorage 清理异常
+        if (!hydrated || !selectedSubject) return;
+        if (loadedSessionSubjectsRef.current.has(selectedSubject)) return;
+        let cancelled = false;
+        const targetSubjectId = selectedSubject;
+        loadSubjectLastSession(targetSubjectId)
+            .then((sess) => {
+                if (cancelled || mutatedSessionSubjectsRef.current.has(targetSubjectId)) return;
+                loadedSessionSubjectsRef.current.add(targetSubjectId);
+                if (sess) {
+                    setLastSessions(prev => ({ ...prev, [targetSubjectId]: sess }));
                 }
+            })
+            .catch(console.error);
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedSubject, hydrated]);
+    useEffect(() => {
+        if (!hydrated) return;
+        const targetSubjectId = selectedSubject || lastSelectedSubjectRef.current;
+        if (!targetSubjectId) return;
+        if (!shouldPersistSession({ mode: currentMode, questions, currentIndex, answerResults })) return;
+        if (sessionAutoSaveTimerRef.current) {
+            clearTimeout(sessionAutoSaveTimerRef.current);
+        }
+        const snapshot = {
+            subjectId: targetSubjectId,
+            mode: currentMode,
+            questions,
+            currentIndex,
+            quizConfig,
+            answerResults,
+            selectedByQuestion,
+            fillInputsByQuestion,
+            updatedAt: Date.now()
+        };
+        sessionAutoSaveTimerRef.current = setTimeout(() => {
+            sessionAutoSaveTimerRef.current = null;
+            setSubjectLastSession(targetSubjectId, snapshot);
+        }, 500);
+        return () => {
+            if (sessionAutoSaveTimerRef.current) {
+                clearTimeout(sessionAutoSaveTimerRef.current);
+                sessionAutoSaveTimerRef.current = null;
             }
         };
-        save().catch(console.error);
-    }, [lastSession, hydrated]);
+    }, [hydrated, selectedSubject, currentMode, questions, currentIndex, quizConfig, answerResults, selectedByQuestion, fillInputsByQuestion]);
     // 迁移旧缓存 (to subject-specific keys)
     useEffect(() => {
         (async () => {
@@ -1855,6 +1917,10 @@ function App() {
         event.target.value = '';
     };
     const performReset = () => {
+        if (sessionAutoSaveTimerRef.current) {
+            clearTimeout(sessionAutoSaveTimerRef.current);
+            sessionAutoSaveTimerRef.current = null;
+        }
         setBrushedIds(new Set());
         setMemorizedIds(new Set());
         setMasteredIds(new Set());
@@ -1862,7 +1928,9 @@ function App() {
         setWrongIds(new Set());
         setFavoriteIds(new Set());
         setHistory([]);
-        setLastSession(null);
+        setLastSessions({});
+        loadedSessionSubjectsRef.current.clear();
+        mutatedSessionSubjectsRef.current.clear();
         
         // 同时物理清理 IndexedDB (localforage) 与 localStorage 的进度缓存，确保重置彻底干净
         localforage.removeItem('app_brushedIds').catch(console.warn);
@@ -1872,7 +1940,7 @@ function App() {
         localforage.removeItem('app_wrongIds').catch(console.warn);
         localforage.removeItem('app_favoriteIds').catch(console.warn);
         localforage.removeItem('app_history').catch(console.warn);
-        localforage.removeItem('app_lastSession').catch(console.warn);
+        clearAllLastSessions(allSubjects.map(s => s.id)).catch(console.error);
 
         localStorage.removeItem('app_brushedIds');
         localStorage.removeItem('app_memorizedIds');
@@ -1881,7 +1949,6 @@ function App() {
         localStorage.removeItem('app_wrongIds');
         localStorage.removeItem('app_favoriteIds');
         localStorage.removeItem('app_history');
-        localStorage.removeItem('app_lastSession');
         clearAutoMasterNoticeSeen();
         clearAutoUnmasterNoticeSeen();
         setAutoMasterNotice(null);
@@ -1892,8 +1959,6 @@ function App() {
     };
     const generateAndStartQuiz = (mode = 'quiz') => {
         if (bankStatus !== 'ready') return;
-        setCurrentIndex(0);
-        setLastSession(null);
         let sourcePool = quizConfig.lectureId === 0 ? Object.values(allQuestionBank).flat() : (allQuestionBank[quizConfig.lectureId] || []);
         if (quizConfig.type !== 'all') {
             sourcePool = sourcePool.filter(q => q.type === quizConfig.type);
@@ -1905,10 +1970,13 @@ function App() {
         else if (quizConfig.filter === 'wrong') sourcePool = sourcePool.filter(q => wrongIds.has(q.id));
         else if (quizConfig.filter === 'favorite') sourcePool = sourcePool.filter(q => favoriteIds.has(q.id));
         else if (quizConfig.filter === 'unmastered') sourcePool = sourcePool.filter(q => !masteredIds.has(q.id));
+        else if (quizConfig.filter === 'mastered') sourcePool = sourcePool.filter(q => masteredIds.has(q.id));
         if (sourcePool.length === 0) {
             alert("该条件下没有可用题目");
             return;
         }
+        setCurrentIndex(0);
+        setSubjectLastSession(selectedSubject, null);
         const shuffled = [...sourcePool].sort(() => 0.5 - Math.random());
         const limit = quizConfig.count === 'all' ? shuffled.length : Number(quizConfig.count);
         setQuestions(shuffled.slice(0, limit));
@@ -1919,37 +1987,41 @@ function App() {
         startMode(mode);
     };
     const resumeLastSession = () => {
-        if (!lastSession) return;
-        setQuestions(lastSession.questions);
-        setCurrentIndex(lastSession.currentIndex);
-        if (lastSession.quizConfig) setQuizConfig(lastSession.quizConfig);
-        startMode(lastSession.mode);
-        const restoredAnswers = lastSession.answerResults || {};
-        const restoredSelections = lastSession.selectedByQuestion || {};
-        const restoredFillInputs = lastSession.fillInputsByQuestion || {};
-        setAnswerResults(restoredAnswers);
-        setSelectedByQuestion(restoredSelections);
-        setFillInputsByQuestion(restoredFillInputs);
-        const currentQ = lastSession.questions?.[lastSession.currentIndex];
+        const session = lastSession;
+        if (!session) return;
+        const restoredAnswers = session.answerResults || {};
+        const restoredSelections = session.selectedByQuestion || {};
+        const restoredFillInputs = session.fillInputsByQuestion || {};
+        const currentQ = session.questions?.[session.currentIndex];
         const currentQid = currentQ?.id;
         const currentSelection = currentQid ? (restoredSelections[currentQid] || []) : [];
         const currentFillInput = currentQid ? (restoredFillInputs[currentQid] || []) : [];
         const answered = currentQid ? Object.prototype.hasOwnProperty.call(restoredAnswers, currentQid) : false;
-        setSelectedIndices(currentSelection);
-        setFillInputs(currentFillInput);
-        setIsAnswered(answered);
-        setShowExplanation(answered);
+
+        runTransition(() => {
+            setQuestions(session.questions);
+            setCurrentIndex(session.currentIndex);
+            if (session.quizConfig) setQuizConfig(session.quizConfig);
+            setAnswerResults(restoredAnswers);
+            setSelectedByQuestion(restoredSelections);
+            setFillInputsByQuestion(restoredFillInputs);
+            setSelectedIndices(currentSelection);
+            setFillInputs(currentFillInput);
+            setIsAnswered(answered);
+            setShowExplanation(answered);
+            setCurrentMode(session.mode);
+        });
     };
     const startMistakeNotebook = () => {
         if (bankStatus !== 'ready') return;
-        setCurrentIndex(0);
-        setLastSession(null);
         const allQs = Object.values(allQuestionBank).flat();
         const wrongQs = allQs.filter(q => wrongIds.has(q.id));
         if (wrongQs.length === 0) {
             alert("暂无错题记录，继续保持！");
             return;
         }
+        setCurrentIndex(0);
+        setSubjectLastSession(selectedSubject, null);
         wrongQs.sort(() => 0.5 - Math.random());
         setQuestions(wrongQs);
         setAnswerResults({});
@@ -1960,14 +2032,14 @@ function App() {
     };
     const startFavoriteNotebook = () => {
         if (bankStatus !== 'ready') return;
-        setCurrentIndex(0);
-        setLastSession(null);
         const allQs = Object.values(allQuestionBank).flat();
         const favQs = allQs.filter(q => favoriteIds.has(q.id));
         if (favQs.length === 0) {
             alert("暂无收藏题目，做题时点击星标即可收藏！");
             return;
         }
+        setCurrentIndex(0);
+        setSubjectLastSession(selectedSubject, null);
         favQs.sort(() => 0.5 - Math.random());
         setQuestions(favQs);
         setAnswerResults({});
@@ -2797,41 +2869,90 @@ function App() {
     const nextQuestion = () => {
         if (currentIndex < questions.length - 1) changeQuestion(currentIndex + 1);
         else {
+            if (sessionAutoSaveTimerRef.current) {
+                clearTimeout(sessionAutoSaveTimerRef.current);
+                sessionAutoSaveTimerRef.current = null;
+            }
+            const targetSubjectId = selectedSubject || lastSelectedSubjectRef.current;
             alert("本组练习完成！");
-            setLastSession(null);
-            runTransition(() => setCurrentMode('dashboard'));
+            runTransition(() => {
+                setSubjectLastSession(targetSubjectId, null);
+                setQuestions([]);
+                setCurrentIndex(0);
+                setCurrentMode('dashboard');
+            });
         }
     };
     const prevQuestion = () => {
         if (currentIndex > 0) changeQuestion(currentIndex - 1);
     };
     const exitToDashboard = () => {
-        const action = () => {
-            if (['quiz', 'memorize', 'mistakes', 'favorites'].includes(currentMode) && questions.length > 0 && currentIndex < questions.length - 1) {
-                setLastSession({
-                    mode: currentMode,
-                    questions,
-                    currentIndex,
-                    quizConfig,
-                    answerResults,
-                    selectedByQuestion,
-                    fillInputsByQuestion
-                });
-            } else {
-                setLastSession(null);
-            }
+        if (sessionAutoSaveTimerRef.current) {
+            clearTimeout(sessionAutoSaveTimerRef.current);
+            sessionAutoSaveTimerRef.current = null;
+        }
+        const targetSubjectId = selectedSubject || lastSelectedSubjectRef.current;
+        const persistable = shouldPersistSession({
+            mode: currentMode,
+            questions,
+            currentIndex,
+            answerResults
+        });
+        const snapshot = persistable ? {
+            subjectId: targetSubjectId,
+            mode: currentMode,
+            questions,
+            currentIndex,
+            quizConfig,
+            answerResults,
+            selectedByQuestion,
+            fillInputsByQuestion,
+            updatedAt: Date.now()
+        } : null;
+        runTransition(() => {
+            setSubjectLastSession(targetSubjectId, snapshot);
             setCurrentMode('dashboard');
-        };
-        runTransition(action);
+        });
     };
     const switchSubject = () => {
+        if (sessionAutoSaveTimerRef.current) {
+            clearTimeout(sessionAutoSaveTimerRef.current);
+            sessionAutoSaveTimerRef.current = null;
+        }
+        const targetSubjectId = selectedSubject || lastSelectedSubjectRef.current;
+        if (targetSubjectId && shouldPersistSession({
+            mode: currentMode,
+            questions,
+            currentIndex,
+            answerResults
+        })) {
+            setSubjectLastSession(targetSubjectId, {
+                subjectId: targetSubjectId,
+                mode: currentMode,
+                questions,
+                currentIndex,
+                quizConfig,
+                answerResults,
+                selectedByQuestion,
+                fillInputsByQuestion,
+                updatedAt: Date.now()
+            });
+        }
         runTransition(() => {
             setSelectedSubject(null);
             setAllQuestionBank({});
             setBankStatus('idle');
             setCurrentMode('dashboard');
             setQuestions([]);
-            setLastSession(null);
+            setCurrentIndex(0);
+            setAnswerResults({});
+            setSelectedByQuestion({});
+            setFillInputsByQuestion({});
+            setSelectedIndices([]);
+            setFillInputs([]);
+            setIsAnswered(false);
+            setShowExplanation(false);
+            setQuizConfig(prev => ({ ...prev, lectureId: 0 }));
         });
     };
     const renderSubjectSelector = () => (
@@ -2997,11 +3118,12 @@ function App() {
                                     <div className="md:col-span-2">
                                         <label
                                             className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block ml-1 dark:text-slate-500">模式</label>
-                                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 bg-slate-50 p-1.5 rounded-2xl dark:bg-slate-950">
+                                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 bg-slate-50 p-1.5 rounded-2xl dark:bg-slate-950">
                                             {[
                                                 {v: 'all', l: '随机'},
                                                 {v: 'new', l: '未做'},
                                                 {v: 'unmastered', l: '未掌握'},
+                                                {v: 'mastered', l: '已掌握'},
                                                 {v: 'wrong', l: '错题'},
                                                 {v: 'favorite', l: '收藏'}
                                             ].map(m => (
@@ -3072,19 +3194,13 @@ function App() {
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4 pt-2">
-                                    <button onClick={() => {
-                                        setCurrentIndex(0);
-                                        generateAndStartQuiz('quiz');
-                                    }}
+                                    <button onClick={() => generateAndStartQuiz('quiz')}
                                             disabled={bankStatus !== 'ready'}
                                             className="py-3 md:py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold shadow-lg shadow-blue-200 hover:shadow-xl hover:-translate-y-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base inline-flex items-center justify-center gap-2 dark:shadow-indigo-900/10">
                                         {bankStatus === 'ready' ? <><Brain size={20}/> 开始刷题</> : <><Loader2
                                             size={20} className="animate-spin"/> {bankProgress}</>}
                                     </button>
-                                    <button onClick={() => {
-                                        setCurrentIndex(0);
-                                        generateAndStartQuiz('memorize');
-                                    }}
+                                    <button onClick={() => generateAndStartQuiz('memorize')}
                                             disabled={bankStatus !== 'ready'}
                                             className="py-3 md:py-4 bg-white border-2 border-slate-100 hover:border-indigo-200 text-slate-600 hover:text-indigo-600 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-sm md:text-base dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:text-indigo-400 dark:hover:border-indigo-900">
                                         <BookOpen size={20}/> 背题模式

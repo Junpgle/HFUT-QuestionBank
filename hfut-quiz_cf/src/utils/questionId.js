@@ -1,3 +1,17 @@
+export const getQuestionSubjectId = (questionId) => {
+  const qid = String(questionId || '');
+  if (!qid) return null;
+  if (qid.startsWith('custom_')) {
+    const idx = qid.lastIndexOf('-Q');
+    return idx > 0 ? qid.slice(0, idx) : null;
+  }
+  if (qid.startsWith('ENG-CUL-')) return 'english-culture';
+  if (qid.startsWith('HGD-MG-')) return 'hgdmy-maogai';
+  if (qid.startsWith('MG-')) return 'maogai';
+  if (/^(OLD-|L\d+-)/.test(qid)) return 'innovation';
+  return 'innovation';
+};
+
 export const normalizeQuestionId = (id) => {
   if (!id) return id;
   const s = String(id).trim();

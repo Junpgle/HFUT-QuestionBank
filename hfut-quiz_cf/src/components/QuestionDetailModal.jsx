@@ -1,7 +1,7 @@
 import { CheckCircle, XCircle, X, Trophy, Zap, Star } from 'lucide-react';
 import { Markdown } from './Markdown';
 
-export function QuestionDetailModal({ viewingRankQuestion, onClose, renderUserExplanations, isFavorited, onToggleFavorite }) {
+export function QuestionDetailModal({ viewingRankQuestion, onClose, renderUserExplanations, isFavorited, onToggleFavorite, isMastered, onToggleMastered }) {
   if (!viewingRankQuestion) return null;
   const { question, options, rawAnswer, explanation, id, rankInfo } = viewingRankQuestion;
   const typeBadgeClass =
@@ -33,6 +33,18 @@ export function QuestionDetailModal({ viewingRankQuestion, onClose, renderUserEx
             </div>
           </div>
           <div className="flex items-center gap-1 ml-4">
+            {onToggleMastered && (
+              <button
+                type="button"
+                onClick={onToggleMastered}
+                aria-pressed={!!isMastered}
+                aria-label={isMastered ? '取消标记已掌握' : '标记为已掌握'}
+                title={isMastered ? '已掌握（点击取消）' : '标记为已掌握'}
+                className={`p-2 rounded-full transition-colors ${isMastered ? 'bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-950/40 dark:text-green-400' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-green-600'}`}
+              >
+                <CheckCircle size={20} aria-hidden="true" />
+              </button>
+            )}
             {onToggleFavorite && (
               <button
                 type="button"

@@ -30,6 +30,7 @@ import {QuizMobileTopBar} from './components/QuizMobileTopBar';
 import {QuizNavControls} from './components/QuizNavControls';
 import {QuizQuestionPanel} from './components/QuizQuestionPanel';
 import {QuizDiscussionPanel} from './components/QuizDiscussionPanel';
+import {AutoMasterNoticeToast} from './components/AutoMasterNoticeToast';
 import {
     BANK_CACHE_VERSION,
     CURRENT_APP_VERSION,
@@ -45,6 +46,15 @@ import {safeGet, safeSet} from './utils/storage';
 import {normalizeSet} from './utils/questionId';
 import {forceAppReload, isNewerVersion} from './utils/appUpdate';
 import {parseFillAnswer, gradeFill} from './utils/fillAnswer';
+import {
+    loadMasterThreshold,
+    saveMasterThreshold,
+    normalizeCorrectStreaks,
+    clampMasterThreshold,
+    hasSeenAutoMasterNotice,
+    markAutoMasterNoticeSeen,
+    clearAutoMasterNoticeSeen
+} from './utils/mastery';
 import {getSubjectById, getSubjectChapterOptions} from './utils/subjectAdapter';
 import {
     getThemeMode,
@@ -91,6 +101,10 @@ function App() {
     const [brushedIds, setBrushedIds] = useState(new Set());
     const [memorizedIds, setMemorizedIds] = useState(new Set());
     const [masteredIds, setMasteredIds] = useState(new Set());
+    const [correctStreaks, setCorrectStreaks] = useState({});
+    const [masterThreshold, setMasterThreshold] = useState(() => loadMasterThreshold());
+    const [customThresholdInput, setCustomThresholdInput] = useState(() => String(loadMasterThreshold()));
+    const [autoMasterNotice, setAutoMasterNotice] = useState(null);
     const [wrongIds, setWrongIds] = useState(new Set());
     const [favoriteIds, setFavoriteIds] = useState(new Set());
     const [customSubjectCounts, setCustomSubjectCounts] = useState({});
@@ -182,6 +196,38 @@ function App() {
             else next.add(questionId);
             return next;
         });
+    };
+
+    const toggleMastered = (questionId) => {
+        if (!questionId) return;
+        const currentlyMastered = masteredIds.has(questionId);
+        setMasteredIds(prev => {
+            const next = new Set(prev);
+            if (currentlyMastered) next.delete(questionId);
+            else next.add(questionId);
+            return next;
+        });
+        if (currentlyMastered) {
+            setCorrectStreaks(prev => {
+                if (!prev[questionId]) return prev;
+                const next = {...prev};
+                delete next[questionId];
+                return next;
+            });
+        } else {
+            setWrongIds(prev => {
+                if (!prev.has(questionId)) return prev;
+                const next = new Set(prev);
+                next.delete(questionId);
+                return next;
+            });
+        }
+    };
+
+    const handleMasterThresholdChange = (rawVal) => {
+        const nextThreshold = saveMasterThreshold(rawVal);
+        setMasterThreshold(nextThreshold);
+        setCustomThresholdInput(String(nextThreshold));
     };
 
     const currentHistory = useMemo(() => {
@@ -912,6 +958,7 @@ function App() {
                 setBrushedIds(normalizeSet(await getSet('app_brushedIds')));
                 setMemorizedIds(normalizeSet(await getSet('app_memorizedIds')));
                 setMasteredIds(normalizeSet(await getSet('app_masteredIds')));
+                setCorrectStreaks(normalizeCorrectStreaks(await safeGet('app_correctStreaks', {})));
                 setWrongIds(normalizeSet(await getSet('app_wrongIds')));
                 setFavoriteIds(normalizeSet(await getSet('app_favoriteIds')));
                 const hist = await safeGet('app_history');
@@ -980,6 +1027,13 @@ function App() {
         setBrushedIds(updatedBrushed);
         setMemorizedIds(updatedMemorized);
         setMasteredIds(updatedMastered);
+        setCorrectStreaks(prev => {
+            const next = {};
+            for (const [qid, count] of Object.entries(prev)) {
+                if (qid && !qid.startsWith(subjectId)) next[qid] = count;
+            }
+            return next;
+        });
         setWrongIds(updatedWrong);
         setFavoriteIds(updatedFavorite);
         setHistory(updatedHistory);
@@ -1000,6 +1054,9 @@ function App() {
     useEffect(() => {
         if (hydrated) safeSet('app_masteredIds', Array.from(masteredIds));
     }, [masteredIds, hydrated]);
+    useEffect(() => {
+        if (hydrated) safeSet('app_correctStreaks', correctStreaks);
+    }, [correctStreaks, hydrated]);
     useEffect(() => {
         if (hydrated) safeSet('app_wrongIds', Array.from(wrongIds));
     }, [wrongIds, hydrated]);
@@ -1949,6 +2006,7 @@ function App() {
         setBrushedIds(new Set());
         setMemorizedIds(new Set());
         setMasteredIds(new Set());
+        setCorrectStreaks({});
         setWrongIds(new Set());
         setFavoriteIds(new Set());
         setHistory([]);
@@ -1958,6 +2016,7 @@ function App() {
         localforage.removeItem('app_brushedIds').catch(console.warn);
         localforage.removeItem('app_memorizedIds').catch(console.warn);
         localforage.removeItem('app_masteredIds').catch(console.warn);
+        localforage.removeItem('app_correctStreaks').catch(console.warn);
         localforage.removeItem('app_wrongIds').catch(console.warn);
         localforage.removeItem('app_favoriteIds').catch(console.warn);
         localforage.removeItem('app_history').catch(console.warn);
@@ -1966,10 +2025,13 @@ function App() {
         localStorage.removeItem('app_brushedIds');
         localStorage.removeItem('app_memorizedIds');
         localStorage.removeItem('app_masteredIds');
+        localStorage.removeItem('app_correctStreaks');
         localStorage.removeItem('app_wrongIds');
         localStorage.removeItem('app_favoriteIds');
         localStorage.removeItem('app_history');
         localStorage.removeItem('app_lastSession');
+        clearAutoMasterNoticeSeen();
+        setAutoMasterNotice(null);
         
         setShowResetModal(false);
         setSyncMsg("进度已重置");
@@ -1989,6 +2051,7 @@ function App() {
         }
         else if (quizConfig.filter === 'wrong') sourcePool = sourcePool.filter(q => wrongIds.has(q.id));
         else if (quizConfig.filter === 'favorite') sourcePool = sourcePool.filter(q => favoriteIds.has(q.id));
+        else if (quizConfig.filter === 'unmastered') sourcePool = sourcePool.filter(q => !masteredIds.has(q.id));
         if (sourcePool.length === 0) {
             alert("该条件下没有可用题目");
             return;
@@ -2702,7 +2765,16 @@ function App() {
                 return n;
             });
             if (countMastered) {
-                setMasteredIds(prev => new Set(prev).add(questionId));
+                const nextCount = (correctStreaks[questionId] || 0) + 1;
+                setCorrectStreaks(prev => ({...prev, [questionId]: nextCount}));
+                if (nextCount >= masterThreshold) {
+                    const wasAlreadyMastered = masteredIds.has(questionId);
+                    setMasteredIds(prev => new Set(prev).add(questionId));
+                    if (!wasAlreadyMastered && !hasSeenAutoMasterNotice()) {
+                        markAutoMasterNoticeSeen();
+                        setAutoMasterNotice({ threshold: masterThreshold });
+                    }
+                }
             }
             setAnswerResults(prev => ({...prev, [questionId]: 'correct'}));
         } else {
@@ -2710,6 +2782,12 @@ function App() {
                 const n = new Set(prev);
                 n.delete(questionId);
                 return n;
+            });
+            setCorrectStreaks(prev => {
+                if (!prev[questionId]) return prev;
+                const next = {...prev};
+                delete next[questionId];
+                return next;
             });
             setWrongIds(prev => new Set(prev).add(questionId));
             setAnswerResults(prev => ({...prev, [questionId]: 'wrong'}));
@@ -3015,15 +3093,77 @@ function App() {
                                     <div className="md:col-span-2">
                                         <label
                                             className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block ml-1 dark:text-slate-500">模式</label>
-                                        <div className="grid grid-cols-4 gap-2 bg-slate-50 p-1.5 rounded-2xl dark:bg-slate-950">
-                                            {[{v: 'all', l: '随机'}, {v: 'new', l: '未做'}, {
-                                                v: 'wrong',
-                                                l: '错题'
-                                            }, {v: 'favorite', l: '收藏'}].map(m => (
+                                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 bg-slate-50 p-1.5 rounded-2xl dark:bg-slate-950">
+                                            {[
+                                                {v: 'all', l: '随机'},
+                                                {v: 'new', l: '未做'},
+                                                {v: 'unmastered', l: '未掌握'},
+                                                {v: 'wrong', l: '错题'},
+                                                {v: 'favorite', l: '收藏'}
+                                            ].map(m => (
                                                 <button key={m.v}
+                                                        type="button"
+                                                        aria-pressed={quizConfig.filter === m.v}
                                                         onClick={() => setQuizConfig({...quizConfig, filter: m.v})}
                                                         className={`py-2 rounded-xl text-xs md:text-sm font-bold transition-all ${quizConfig.filter === m.v ? 'bg-white shadow text-blue-600 dark:bg-slate-900 dark:text-blue-400 dark:shadow-indigo-950/45' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'}`}>{m.l}</button>
                                             ))}
+                                        </div>
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <div className="flex items-center justify-between gap-2 mb-2 ml-1">
+                                            <label
+                                                htmlFor="master-threshold-input"
+                                                className="text-xs font-bold text-slate-400 uppercase tracking-wider dark:text-slate-500">自动掌握阈值</label>
+                                            <span id="master-threshold-help" className="text-[11px] text-slate-400 dark:text-slate-500">
+                                                连续答对 {masterThreshold} 遍自动掌握（答错重置）
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-1.5 rounded-2xl dark:bg-slate-950">
+                                            {[1, 2, 3, 5].map(n => (
+                                                <button
+                                                    key={n}
+                                                    type="button"
+                                                    onClick={() => handleMasterThresholdChange(n)}
+                                                    aria-pressed={masterThreshold === n}
+                                                    className={`flex-1 min-w-[3.5rem] py-2 px-2 rounded-xl text-xs md:text-sm font-bold transition-all ${masterThreshold === n ? 'bg-white shadow text-green-600 dark:bg-slate-900 dark:text-green-400 dark:shadow-indigo-950/45' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'}`}
+                                                >
+                                                    {n === 2 ? '2遍(默认)' : `${n}遍`}
+                                                </button>
+                                            ))}
+                                            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-xl border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
+                                                <span className="text-xs font-bold text-slate-400 dark:text-slate-500">自定义</span>
+                                                <input
+                                                    id="master-threshold-input"
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    pattern="[0-9]*"
+                                                    maxLength={2}
+                                                    aria-describedby="master-threshold-help"
+                                                    value={customThresholdInput}
+                                                    onChange={(e) => {
+                                                        const digits = e.target.value.replace(/[^0-9]/g, '');
+                                                        setCustomThresholdInput(digits);
+                                                        if (digits) {
+                                                            const parsed = Number.parseInt(digits, 10);
+                                                            if (parsed >= 1) {
+                                                                const clamped = clampMasterThreshold(parsed);
+                                                                saveMasterThreshold(clamped);
+                                                                setMasterThreshold(clamped);
+                                                            }
+                                                        }
+                                                    }}
+                                                    onBlur={() => handleMasterThresholdChange(customThresholdInput)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            handleMasterThresholdChange(customThresholdInput);
+                                                            e.currentTarget.blur();
+                                                        }
+                                                    }}
+                                                    className="w-10 text-center text-base md:text-sm font-bold text-slate-800 bg-transparent border-b border-slate-300 focus:border-green-500 focus:outline-none dark:text-slate-100 dark:border-slate-700"
+                                                />
+                                                <span className="text-xs font-bold text-slate-400 dark:text-slate-500">遍</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -3317,6 +3457,10 @@ function App() {
                                     fillInputs={fillInputs}
                                     isFavorited={favoriteIds.has(currentQ.id)}
                                     onToggleFavorite={() => toggleFavorite(currentQ.id)}
+                                    isMastered={masteredIds.has(currentQ.id)}
+                                    onToggleMastered={() => toggleMastered(currentQ.id)}
+                                    correctStreak={correctStreaks[currentQ.id] || 0}
+                                    masterThreshold={masterThreshold}
                                     onOptionClick={handleOptionClick}
                                     onSubmit={submitAnswer}
                                     onFillInputChange={(i, v) => setFillInputs(prev => {
@@ -3434,6 +3578,8 @@ function App() {
             renderUserExplanations={renderUserExplanations}
             isFavorited={viewingRankQuestion ? favoriteIds.has(viewingRankQuestion.id) : false}
             onToggleFavorite={() => viewingRankQuestion && toggleFavorite(viewingRankQuestion.id)}
+            isMastered={viewingRankQuestion ? masteredIds.has(viewingRankQuestion.id) : false}
+            onToggleMastered={() => viewingRankQuestion && toggleMastered(viewingRankQuestion.id)}
         />
     );
     // --- 排行榜页面 ---
@@ -3516,6 +3662,10 @@ function App() {
             {currentMode === 'ranking' && renderRankingPage()}
             {viewingRankQuestion && renderQuestionDetailModal()}
             {renderSubjectSelectionModal()}
+            <AutoMasterNoticeToast
+                notice={autoMasterNotice}
+                onDismiss={() => setAutoMasterNotice(null)}
+            />
             {/* API 受限提示 */}
             {apiLimitReached && (
                 <div className="fixed bottom-0 left-0 right-0 z-[100] animate-enter">

@@ -18,6 +18,10 @@ export function QuizQuestionPanel({
   fillInputs = [],
   isFavorited,
   onToggleFavorite,
+  isMastered,
+  onToggleMastered,
+  correctStreak = 0,
+  masterThreshold = 2,
   onOptionClick,
   onSubmit,
   onFillInputChange,
@@ -113,6 +117,34 @@ export function QuizQuestionPanel({
                   : translateEnabled
                     ? (dictDownloadState === 'fallback' ? '划词翻译(基础)' : '划词翻译')
                     : '划词翻译'}
+              </span>
+            </button>
+          )}
+          {onToggleMastered && (
+            <button
+              type="button"
+              onClick={onToggleMastered}
+              aria-pressed={!!isMastered}
+              aria-label={isMastered ? '取消标记已掌握' : '标记为已掌握'}
+              title={
+                isMastered
+                  ? '点击取消已掌握标记'
+                  : masterThreshold > 1
+                    ? `当前连对 ${correctStreak}/${masterThreshold} 遍，点击可手动标记为已掌握`
+                    : '点击标记为已掌握'
+              }
+              className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all
+                ${isMastered
+                  ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100 dark:bg-green-950/30 dark:border-green-800/70 dark:text-green-300 dark:hover:bg-green-950/50'
+                  : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-green-600 hover:border-green-200 hover:bg-green-50/60 dark:bg-slate-800/70 dark:border-slate-700 dark:text-slate-400 dark:hover:text-green-300 dark:hover:border-green-800/60'}`}
+            >
+              <CheckCircle size={15} aria-hidden="true" className={isMastered ? 'text-green-600 dark:text-green-400' : ''} />
+              <span>
+                {isMastered
+                  ? '已掌握'
+                  : correctStreak > 0 && masterThreshold > 1
+                    ? `标记掌握 (${correctStreak}/${masterThreshold})`
+                    : '标记掌握'}
               </span>
             </button>
           )}

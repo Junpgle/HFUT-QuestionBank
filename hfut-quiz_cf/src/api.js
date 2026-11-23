@@ -109,6 +109,14 @@ export const api = {
     return await this.request('/verify-email', 'POST', { email, code }, { skipAuth: true });
   },
 
+  // Question-Bank & extension share the same email-code account recovery.
+  async requestPasswordReset(email) {
+    return this.request('/password-reset/request','POST',{email},{skipAuth:true});
+  },
+  async confirmPasswordReset(email, code, newPassword) {
+    return this.request('/password-reset/confirm','POST',{email,code,newPassword},{skipAuth:true});
+  },
+
   // 4. 登出
   logout() {
     clearAllInteractionCaches();

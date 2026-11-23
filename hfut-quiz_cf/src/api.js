@@ -46,7 +46,7 @@ export const api = {
     const promise = (async () => {
       const res = await fetch(url, fetchOptions);
 
-      if (res.status === 401 && safeEndpoint !== '/login') {
+      if (res.status === 401 && !skipAuth && safeEndpoint !== '/login') {
         this.logout();
         return null;
       }

@@ -21,6 +21,7 @@ const App = lazy(() => import('./App.jsx'));
 const Report = lazy(() => import('./Report.jsx'));
 const Introduce = lazy(() => import('./Introduce.jsx'));
 const Register = lazy(() => import('./Register.jsx'));
+const PasswordReset = lazy(() => import('./PasswordReset.jsx'));
 
 const withSuspense = (element) => (
   <Suspense fallback={<RouteLoading />}>{element}</Suspense>
@@ -31,6 +32,7 @@ const router = createHashRouter([
   { path: '/report', element: withSuspense(<Report />), errorElement: <RouteError /> },
   { path: '/introduce', element: withSuspense(<Introduce />), errorElement: <RouteError /> },
   { path: '/register', element: withSuspense(<Register />), errorElement: <RouteError /> },
+  { path: '/reset-password', element: withSuspense(<PasswordReset />), errorElement: <RouteError /> },
   { path: '*', element: <RouteError /> },
 ]);
 

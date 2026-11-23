@@ -24,10 +24,13 @@ export function LoginScreen({ brushedCount, username, password, authLoading, aut
           </button>
         </form>
 
-        <div className="mt-6 text-center">
+        <div className="mt-6 text-center space-y-3">
           <a href="/#/register" className="text-sm text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition-colors flex items-center justify-center gap-1">
             没有账号？<span className="underline decoration-blue-300 decoration-2 underline-offset-2">去注册新账号</span>
             <ChevronRight size={14} />
+          </a>
+          <a href="/#/reset-password" className="text-sm font-medium text-blue-600 dark:text-blue-300 hover:underline flex items-center justify-center gap-1">
+            忘记密码？通过绑定邮箱找回或修改密码
           </a>
         </div>
       </div>

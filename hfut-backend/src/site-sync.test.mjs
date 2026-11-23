@@ -100,3 +100,17 @@ test('reject oversized payload and untrusted IDs',async()=>{
   const unauth=await f.call('/api/site-sync/exchange',0,{});
   assert.equal(unauth.status,401);
 });
+
+test('daily activity merges by per-device maximum and unique question IDs',async()=>{
+  const f=fixture(),ep='/api/site-sync/exchange';
+  const day=new Date().toISOString().slice(0,10);
+  const first=await f.call(ep,1,{metrics:{[day]:{seconds:{pc:120},questions:['net:q1','os:q2']}}});
+  assert.equal(first.body.metrics[day].seconds.pc,120);
+  const second=await f.call(ep,1,{metrics:{[day]:{seconds:{pc:90,phone:60},questions:['net:q1','net:q3']}}});
+  assert.deepEqual(second.body.metrics[day].seconds,{pc:120,phone:60});
+  assert.deepEqual(second.body.metrics[day].questions,['net:q1','net:q3','os:q2']);
+  const repeated=await f.call(ep,1,{metrics:{[day]:{seconds:{pc:120,phone:60},questions:['net:q1']}}});
+  assert.equal(repeated.body.version,second.body.version,'replaying partial stats does not inflate totals');
+  const another=await f.call(ep,2,{metrics:{[day]:{seconds:{tablet:45},questions:['net:q4']}}});
+  assert.equal(another.body.metrics[day].questions.length,1,'analytics are isolated by account');
+});

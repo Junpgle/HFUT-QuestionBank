@@ -54,6 +54,20 @@
 
 数据库迁移语句已附于 `hfut-backend/schema.sql`，线上 D1 `hfut-db` 已新增该表。扩展的 Microsoft Edge 商店正式包需由扩展项目另行提交更新和审核，详情见扩展的 [隐私政策](https://github.com/Junpgle/HFUT-CS-Online-Sync-Extension/blob/main/PRIVACY.md)。
 
+## 账号注册与邮箱验证码找回密码
+
+Question-Bank 账号同时用于本题库和 [HFUT-CS-Online 全站学习同步扩展](https://github.com/Junpgle/HFUT-CS-Online-Sync-Extension)。两个产品共用用户名、密码和 JWT 鉴权；扩展中需单独登录。
+
+- **注册新账号：** https://qbank.junpgle.me/#/register
+- **修改／忘记密码：** https://qbank.junpgle.me/#/reset-password
+- **登录入口：** https://qbank.junpgle.me/#/
+
+注册时发送邮箱激活验证码。修改或找回密码时，输入**已激活账号的绑定邮箱**，即可通过 Resend 获得独立的一次性 6 位验证码；验证码有效期 **10 分钟**，错误尝试最多 **5 次**，重复发送至少间隔 **60 秒**，并对邮箱及请求来源设置额外发送频率限制。新密码要求 **8–128 位**，修改成功后原有题库网页和扩展端 JWT 均失效，需要在所有设备重新登录。
+
+相关 API：`POST /api/password-reset/request`（提交邮箱获取验证码，统一响应不透露账号是否存在）和 `POST /api/password-reset/confirm`（提交邮箱、验证码及新密码）。数据库中的 `PasswordResetRequests` 独立保存验证码的 HMAC 摘要、有效期及错误次数；`PasswordResetIpRate` 使用带密钥摘要限制异常请求，不存储明文来源 IP。密码仍按 bcrypt 保存；重置流程不会读取或删除题库成绩及 HFUT-CS-Online 学习记录。
+
+线上 D1 `hfut-db` 已增加上述两张表及 `Users.token_version` 列，原有账号无需重新注册。
+
 ## 内置题库
 
 | 科目 | 章节/说明 | 数据文件 |

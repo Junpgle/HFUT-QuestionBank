@@ -19,7 +19,7 @@ function compare(a, b, ta='t') {
   return 0;
 }
 
-const validDay = s => typeof s === 'string' && /^20\\d{2}-(0[1-9]|1[0-2])-([0-2]\\d|3[01])$/.test(s) &&
+const validDay = s => typeof s === 'string' && /^20\d{2}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(s) &&
   !Number.isNaN(Date.parse(s + 'T00:00:00Z'));
 const validMetricQuestion = s => typeof s === 'string' && s.length <= 150 &&
   /^[a-z][a-z0-9-]{1,17}:[A-Za-z0-9:_-]{1,130}$/.test(s);

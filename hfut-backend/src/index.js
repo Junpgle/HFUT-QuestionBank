@@ -143,7 +143,8 @@ async function getOptionalUserId(c) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
   try {
     const payload = await verify(authHeader.split(' ')[1], getJwtSecret(c.env), 'HS256');
-    return payload.id ?? null;
+    const account=await c.env.DB.prepare('SELECT token_version FROM Users WHERE id=? AND email_verified=1').bind(payload.id).first();
+    return account&&Number(account.token_version||0)===Number(payload.token_version||0)?payload.id:null;
   } catch {
     return null;
   }

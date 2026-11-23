@@ -55,4 +55,5 @@ jobs:
           git switch -C deploy/site-sync-bundle
           git add -f hfut-backend/build/site-sync-worker.mjs
           git commit -m "build: compiled Question-Bank Worker for site sync"
+          git fetch origin refs/heads/deploy/site-sync-bundle:refs/remotes/origin/deploy/site-sync-bundle
           git push --force-with-lease origin HEAD:refs/heads/deploy/site-sync-bundle

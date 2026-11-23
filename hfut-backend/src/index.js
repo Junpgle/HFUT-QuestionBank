@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { createHash } from 'node:crypto'
 import { Resend } from 'resend'
 import { registerSiteSyncRoutes } from './site-sync.js'
+import { registerPasswordResetRoutes } from './password-reset.js'
 
 const app = new Hono()
 
@@ -67,6 +68,8 @@ app.use('/api/*', async (c, next) => {
     '/api/register',
     '/api/onlineCount',
     '/api/verify-email',
+    '/api/password-reset/request',
+    '/api/password-reset/confirm',
     '/api/getWrongQuestionRanking',
     '/api/recoverOutageStats',
     '/api/SystemConfig'
@@ -101,6 +104,10 @@ app.use('/api/*', async (c, next) => {
   const token = authHeader.split(' ')[1];
   try {
     const payload = await verify(token, jwtSecret, 'HS256');
+    const account=await c.env.DB.prepare('SELECT token_version FROM Users WHERE id=? AND email_verified=1').bind(payload.id).first();
+    if(!account||Number(account.token_version||0)!==Number(payload.token_version||0)) {
+      return c.json({error:'登录状态已失效，请重新登录'},401);
+    }
     c.set('user', payload);
     await next();
   } catch (e) {
@@ -485,6 +492,7 @@ app.post('/api/login', async (c) => {
     const token = await sign({
       id: user.id,
       username: user.username,
+      token_version: Number(user.token_version||0),
       exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30
     }, getJwtSecret(c.env), 'HS256');
 
@@ -902,5 +910,6 @@ app.post('/api/recoverOutageStats', async (c) => c.json({ success: true }));
 
 // Extension API uses the same /api/* JWT authentication as Question-Bank.
 registerSiteSyncRoutes(app);
+registerPasswordResetRoutes(app);
 
 export default app

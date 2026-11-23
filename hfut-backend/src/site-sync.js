@@ -18,8 +18,45 @@ function compare(a, b, ta='t') {
   if(ta==='t' && 'disabled' in a && 'disabled' in b) return Number(a.disabled)-Number(b.disabled);
   return 0;
 }
+
+const validDay = s => typeof s === 'string' && /^20\\d{2}-(0[1-9]|1[0-2])-([0-2]\\d|3[01])$/.test(s) &&
+  !Number.isNaN(Date.parse(s + 'T00:00:00Z'));
+const validMetricQuestion = s => typeof s === 'string' && s.length <= 150 &&
+  /^[a-z][a-z0-9-]{1,17}:[A-Za-z0-9:_-]{1,130}$/.test(s);
+function cleanMetrics(raw) {
+  const result = {};
+  if (!own(raw)) return result;
+  const min = new Date(Date.now() - 90 * 86400000).toISOString().slice(0,10);
+  const max = new Date(Date.now() + 86400000).toISOString().slice(0,10);
+  for(const [day,row] of Object.entries(raw).slice(0,100)) {
+    if(!validDay(day) || day<min || day>max || !own(row)) continue;
+    const seconds={};
+    for(const [device,n] of Object.entries(own(row.seconds)?row.seconds:{}).slice(0,30))
+      if(validDevice(device) && device.length>0 && Number.isSafeInteger(n) && n>=0 && n<=86400)
+        seconds[device]=n;
+    const questions=[...new Set((Array.isArray(row.questions)?row.questions:[])
+      .slice(0,3000).filter(validMetricQuestion))].sort();
+    result[day]={seconds,questions};
+  }
+  return result;
+}
+function mergeMetrics(a,b) {
+  const out={};
+  for(const day of new Set([...Object.keys(a),...Object.keys(b)])) {
+    const first=a[day]||{seconds:{},questions:[]};
+    const second=b[day]||{seconds:{},questions:[]};
+    const seconds={...first.seconds};
+    for(const [device,value] of Object.entries(second.seconds))
+      seconds[device]=Math.max(seconds[device]||0,value);
+    const questions=[...new Set([...first.questions,...second.questions])].sort();
+    if(questions.length>3000)throw new Error('每日题目统计超出额度');
+    out[day]={seconds,questions};
+  }
+  return out;
+}
+
 function parseSnapshot(raw) {
-  if (!own(raw)) return {records:{},reading:{},controls:{}};
+  if (!own(raw)) return {records:{},reading:{},controls:{},metrics:{}};
   const records={}, reading={}, controls={};
   for (const [course, answers] of Object.entries(own(raw.records) ? raw.records : {})) {
     if (!validCourse(course) || !own(answers)) continue;
@@ -47,10 +84,10 @@ function parseSnapshot(raw) {
       !validTime(c.t) || !validDevice(c.d)) continue;
     controls[course]={disabled:c.disabled,t:c.t,d:c.d};
   }
-  return {records,reading,controls};
+  return {records,reading,controls,metrics:cleanMetrics(raw.metrics)};
 }
 function mergeSnapshots(a,b) {
-  const out={records:{},reading:{},controls:{}};
+  const out={records:{},reading:{},controls:{},metrics:mergeMetrics(a.metrics||{},b.metrics||{})};
   for (const course of new Set([...Object.keys(a.controls),...Object.keys(b.controls)])) {
     const x=a.controls[course], y=b.controls[course];
     out.controls[course] = compare(x,y)>=0?x:y;
@@ -77,7 +114,7 @@ function mergeSnapshots(a,b) {
     throw new Error('阅读位置超出当前服务的 500 条额度');
   return out;
 }
-const empty=()=>({records:{},reading:{},controls:{}});
+const empty=()=>({records:{},reading:{},controls:{},metrics:{}});
 function userId(c){
   const id=c.get('user')?.id;
   if(!Number.isSafeInteger(id)||id<=0)throw new Error('用户身份无效');

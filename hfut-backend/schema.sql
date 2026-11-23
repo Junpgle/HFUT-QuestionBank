@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS Users (
     username TEXT UNIQUE NOT NULL,
     email TEXT,
     password_hash TEXT NOT NULL,
+    token_version INTEGER NOT NULL DEFAULT 0, -- bump after password reset to revoke JWT
     email_verified INTEGER DEFAULT 0, -- 0:未验证, 1:已验证
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     salt TEXT,
@@ -116,4 +117,23 @@ CREATE TABLE IF NOT EXISTS SiteSyncState (
     payload TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Independent email password reset flow. Codes are stored as keyed HMAC hashes.
+-- Does not reuse Users.verification_code (registration-only).
+CREATE TABLE IF NOT EXISTS PasswordResetRequests (
+    user_id INTEGER PRIMARY KEY REFERENCES Users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_sent_at INTEGER NOT NULL,
+    window_start INTEGER NOT NULL,
+    window_count INTEGER NOT NULL DEFAULT 1
+);
+
+-- HMAC of Cloudflare-provided IP + JWT_SECRET, not plaintext IP addresses.
+CREATE TABLE IF NOT EXISTS PasswordResetIpRate (
+    ip_hash TEXT PRIMARY KEY,
+    window_start INTEGER NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0
 );

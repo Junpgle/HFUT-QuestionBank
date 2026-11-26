@@ -140,10 +140,3 @@ npm run deploy   # 部署至 Cloudflare Workers
 
 - 主要开发者：[Junpgle](https://github.com/Junpgle)
 - 本项目仅供学习交流使用，请勿用于商业用途。
-
-
-### 导出到刷题助手（兼容 JSON）
-
-在 Cloudflare 版（`hfut-quiz_cf`）首页点击 **导出 → 刷题助手兼容 JSON → 选择题库**，下载 JSON 数组。请先进入每个待导出的课程一次，确保题库已经加载到本地。该格式可直接复制到 [刷题助手](https://github.com/Junpgle/chaoxing-practice-extension) 的导入题库或追加导入文本框。支持五类题型，保留课程、章节标签、选项顺序、答案、解析和稳定 ID；不包含账号或做题记录。缺少有效答案时会提示，不会猜测答案。填空与简答保留原始参考答案文本；目标插件目前不支持 Qbank 的逐空判题与同义答案规则。原始题库和一体包导出功能不变。
-
-回归测试：`cd hfut-quiz_cf && node --test src/utils/practiceHelperExport.test.js`。

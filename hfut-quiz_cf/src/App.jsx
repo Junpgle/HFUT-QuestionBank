@@ -60,6 +60,7 @@ import {
 } from './utils/lastSession';
 import {forceAppReload, isNewerVersion} from './utils/appUpdate';
 import {parseFillAnswer, gradeFill} from './utils/fillAnswer';
+import {buildPracticeHelperExport} from './utils/practiceHelperExport';
 import {
     getCachedThread,
     setCachedThread,
@@ -1546,6 +1547,7 @@ function App() {
                 options: [
                     {value: 'progress', label: '答题状态'},
                     {value: 'raw_bank', label: '原始题库'},
+                    {value: 'practice_helper', label: '刷题助手兼容 JSON'},
                     {value: 'bundle', label: '题库+答题状态（一体包）'}
                 ],
                 defaultValues: ['progress']
@@ -1621,12 +1623,41 @@ function App() {
                 const cached = await safeGet(key, null);
                 if (cached && Object.keys(cached).length > 0) {
                     banks[sub.id] = cached;
-                } else if (sub.id === selectedSubject && allQuestionBank && Object.keys(allQuestionBank).length > 0) {
+                } else if (exportType === 'practice_helper' && sub.isCustom && sub.questionBank && Object.keys(sub.questionBank).length > 0) {
+                    banks[sub.id] = sub.questionBank;
+                } else if (sub.id === selectedSubject && allQuestionBank && Object.keys(allQuestionBank).length > 0
+                    && (exportType !== 'practice_helper' || bankStatus === 'ready')) {
                     banks[sub.id] = allQuestionBank;
                 }
             }
             if (!Object.keys(banks).length) {
                 throw new Error("未找到可导出的题库缓存，请先进入对应题库页面完成加载。");
+            }
+            if (exportType === 'practice_helper') {
+                // Require every selected bank; never silently export a partial selection.
+                const missing = subjectList.filter(sub => !banks[sub.id] ||
+                    !Object.values(banks[sub.id]).some(list => Array.isArray(list) && list.length));
+                if (missing.length) {
+                    throw new Error('以下题库尚未加载，请先进入对应题库页面：' + missing.map(s => s.name).join('、'));
+                }
+                const {questions, missingAnswers} = buildPracticeHelperExport(subjectList, banks);
+                if (!questions.length) throw new Error('没有可导出的题目。');
+                if (missingAnswers.length && !window.confirm(
+                    '有 ' + missingAnswers.length + ' 道题缺少有效答案，将保留题目但不猜测答案。\n' +
+                    missingAnswers.slice(0, 5).join('\n') + '\n是否继续导出？'
+                )) return;
+                const blob = new Blob([JSON.stringify(questions, null, 2)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `HFUT_PracticeHelper_${isAll ? 'all' : chosenSubjects.join('_')}_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                setSyncStatus('success');
+                setSyncMsg('已导出 ' + questions.length + ' 道题' + (missingAnswers.length ? '，缺答案 ' + missingAnswers.length + ' 道' : ''));
+                return;
             }
             if (exportType === 'bundle') {
                 const bundleData = {
@@ -1705,6 +1736,7 @@ function App() {
             console.error('Export failed', err);
             setSyncStatus('error');
             setSyncMsg("导出失败");
+            alert(err?.message || '导出失败，请重试。');
         }
     };
     /**

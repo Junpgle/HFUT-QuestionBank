@@ -791,8 +791,10 @@ app.get('/api/getWrongQuestionRanking', async (c) => {
       querySql += " AND question_id LIKE 'HGD-MG-%'";
     } else if (subject === 'english-culture') {
       querySql += " AND question_id LIKE 'ENG-CUL-%'";
+    } else if (subject === 'cultural-relics') {
+      querySql += " AND question_id LIKE 'RELICS-%'";
     } else if (subject === 'innovation') {
-      querySql += " AND question_id NOT LIKE 'MG-%' AND question_id NOT LIKE 'HGD-MG-%' AND question_id NOT LIKE 'ENG-CUL-%'";
+      querySql += " AND question_id NOT LIKE 'MG-%' AND question_id NOT LIKE 'HGD-MG-%' AND question_id NOT LIKE 'ENG-CUL-%' AND question_id NOT LIKE 'RELICS-%'";
     }
 
     querySql += ' ORDER BY error_count DESC LIMIT ?';

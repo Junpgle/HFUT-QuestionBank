@@ -1,3 +1,5 @@
+import { RELICS_SUBJECT_ID, RELICS_CHAPTERS } from '../utils/culturalRelics.js';
+
 export const CURRENT_APP_VERSION = '5.3.1';
 export const LEADERBOARD_LIMIT = 50;
 export const GITHUB_BASE = 'https://raw.githubusercontent.com/Junpgle/HFUT---Innovation-and-Entrepreneurship-Question-Bank/refs/heads/main/questions/';
@@ -66,6 +68,18 @@ export const SUBJECTS = [
     file: 'hgdmy-maogai.json',
     lectures: [{ id: 1, name: '全部题目' }],
     getChapters: (bank) => [{ id: 1, name: '全部题目' }].filter((ch) => bank[ch.id]?.length),
+    getChapterName: () => '全部题目',
+  },
+  {
+    id: RELICS_SUBJECT_ID,
+    name: '文物精品与中华文明',
+    shortName: '文物精品',
+    category: '公共课程',
+    icon: '🏺',
+    description: '254 道题，涵盖考古遗址、青铜器、玉器、古代音乐与天文历法，附完整解析',
+    file: 'cultural-relics.json',
+    lectures: RELICS_CHAPTERS,
+    getChapters: (bank) => RELICS_CHAPTERS.filter(ch => bank[ch.id]?.length),
     getChapterName: () => '全部题目',
   },
   {

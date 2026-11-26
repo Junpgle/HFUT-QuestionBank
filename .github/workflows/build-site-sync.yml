@@ -36,7 +36,9 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Build Question-Bank with account recovery page
         working-directory: hfut-quiz_cf
-        run: npm run build
+        run: |
+          node --test src/utils/culturalRelics.test.js
+          npm run build
       - name: Compile Worker without deploying production
         working-directory: hfut-backend
         run: npx wrangler deploy --dry-run --outdir .build

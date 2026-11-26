@@ -76,6 +76,7 @@ Question-Bank 账号同时用于本题库和 [HFUT-CS-Online 全站学习同步�
 | 毛泽东思想和中国特色社会主义理论体系概论 | 导论 + 第一章 ~ 第八章 | `questions/maogai_full.json` |
 | 合工大智慧马院-毛概 | 综合题库 | `hgdmy-maogai.json` |
 | 英语国家社会与文化 | 作业一 ~ 作业三（含多空填空题） | `questions/english-culture.json` |
+| 文物精品与中华文明 | 254 道题（单选、多选、判断、填空、简答），全部附解析 | `hfut-quiz_cf/public/cultural-relics.json` |
 
 ## 技术栈
 
@@ -140,3 +141,6 @@ npm run deploy   # 部署至 Cloudflare Workers
 
 - 主要开发者：[Junpgle](https://github.com/Junpgle)
 - 本项目仅供学习交流使用，请勿用于商业用途。
+
+
+文物精品与中华文明为内置题库，题目 ID 使用 `RELICS-` 前缀，参与常规云同步和学习报告。题干、选项、课程标准答案与原始导出一致；补充解析中的课程口径和争议说明保留。当前来源为一份综合自测卷，统一归为「全部题目」，不虚构章节。为保持历史学习记录，未来新增题目请追加，不要重排现有题目。

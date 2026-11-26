@@ -5,6 +5,7 @@ export const getQuestionSubjectId = (questionId) => {
     const idx = qid.lastIndexOf('-Q');
     return idx > 0 ? qid.slice(0, idx) : null;
   }
+  if (qid.startsWith('RELICS-')) return 'cultural-relics';
   if (qid.startsWith('ENG-CUL-')) return 'english-culture';
   if (qid.startsWith('HGD-MG-')) return 'hgdmy-maogai';
   if (qid.startsWith('MG-')) return 'maogai';

@@ -60,6 +60,7 @@ import {
 } from './utils/lastSession';
 import {forceAppReload, isNewerVersion} from './utils/appUpdate';
 import {parseFillAnswer, gradeFill} from './utils/fillAnswer';
+import {parseCulturalRelicsJson, RELICS_SUBJECT_ID} from './utils/culturalRelics.js';
 import {
     getCachedThread,
     setCachedThread,
@@ -137,6 +138,7 @@ function App() {
             else if (s.id === 'maogai') totalCount = 1084;
             else if (s.id === 'hgdmy-maogai') totalCount = 583;
             else if (s.id === 'english-culture') totalCount = 169;
+            else if (s.id === RELICS_SUBJECT_ID) totalCount = 254;
             else {
                 totalCount = s.questionCount || customSubjectCounts[s.id] || 0;
             }
@@ -1184,6 +1186,32 @@ function App() {
                     }
                     return;
                 }
+                if (subject.id === RELICS_SUBJECT_ID) {
+                    setBankProgress('正在加载文物精品与中华文明题库...');
+                    try {
+                        const url = '/cultural-relics.json';
+                        const res = await fetch(url);
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        const rawJson = await res.json();
+                        const parsed = parseCulturalRelicsJson(rawJson);
+                        if (Object.keys(parsed).length > 0) {
+                            setAllQuestionBank(parsed);
+                            setBankStatus('ready');
+                            await safeSet(cacheKey, parsed);
+                            await safeSet(cacheVerKey, BANK_CACHE_VERSION);
+                            setBankProgress('题库已就绪');
+                            setBankPercent(100);
+                        } else {
+                            throw new Error('解析结果为空');
+                        }
+                    } catch (error) {
+                        console.warn('文物精品与中华文明题库加载失败', error);
+                        setBankStatus('error');
+                        setErrorMsg("文物精品与中华文明题库加载失败: " + error.message);
+                        setBankPercent(0);
+                    }
+                    return;
+                }
                 const lectures = subject.lectures || LECTURES;
                 const total = lectures.length;
                 const newBank = {};
@@ -1323,6 +1351,31 @@ function App() {
                 return;
             }
         }
+        if (subject.id === RELICS_SUBJECT_ID) {
+            try {
+                const url = '/cultural-relics.json';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const rawJson = await res.json();
+                const parsed = parseCulturalRelicsJson(rawJson);
+                if (Object.keys(parsed).length > 0) {
+                    setAllQuestionBank(parsed);
+                    setBankStatus('ready');
+                    await safeSet(cacheKey, parsed);
+                    await safeSet(cacheVerKey, BANK_CACHE_VERSION);
+                    setBankProgress('题库已更新');
+                    setBankPercent(100);
+                    return;
+                }
+                throw new Error('解析结果为空');
+            } catch (error) {
+                console.warn('文物精品与中华文明题库强制更新失败', error);
+                setBankStatus('error');
+                setErrorMsg("文物精品与中华文明题库强制更新失败: " + error.message);
+                setBankPercent(0);
+                return;
+            }
+        }
         const lectures = subject.lectures || LECTURES;
         const total = lectures.length;
         const newBank = {};
@@ -1380,7 +1433,7 @@ function App() {
         if (!currentUser) return;
         if (!silent) {
             const ok = window.confirm(
-                "将备份到云端的内容：\n- 创新创业/毛概/马院毛概/英美文化的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录（最多500条）\n\n不会备份：\n- 自定义题库及其进度（仅保留本地）\n\n是否继续备份？"
+                "将备份到云端的内容：\n- 内置题库（含文物精品与中华文明）的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录（最多500条）\n\n不会备份：\n- 自定义题库及其进度（仅保留本地）\n\n是否继续备份？"
             );
             if (!ok) return;
         }
@@ -1415,7 +1468,7 @@ function App() {
                 if (!silent) {
                     setSyncStatus('success');
                     setSyncMsg("备份成功");
-                    alert("备份完成：已将四套内置题库的答题状态与历史记录同步到云端；自定义题库未上传。");
+                    alert("备份完成：已将全部内置题库的答题状态与历史记录同步到云端；自定义题库未上传。");
                 }
             } else {
                 return Promise.reject(new Error(response ? response.message : "云端未返回成功状态"));
@@ -1501,7 +1554,7 @@ function App() {
         if (!currentUser) return;
         if (!silent) {
             const ok = window.confirm(
-                "将从云端恢复的内容：\n- 创新创业/毛概/马院毛概/英美文化的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录\n\n恢复方式：与本地合并去重，不会覆盖自定义题库。\n\n是否继续恢复？"
+                "将从云端恢复的内容：\n- 内置题库（含文物精品与中华文明）的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录\n\n恢复方式：与本地合并去重，不会覆盖自定义题库。\n\n是否继续恢复？"
             );
             if (!ok) return;
         }
@@ -1516,7 +1569,7 @@ function App() {
                 if (!silent) {
                     setSyncStatus('success');
                     setSyncMsg("同步完成");
-                    alert("恢复完成：已从云端合并恢复四套内置题库的答题状态与历史记录；自定义题库未受影响。");
+                    alert("恢复完成：已从云端合并恢复全部内置题库的答题状态与历史记录；自定义题库未受影响。");
                 }
             } else {
                 if (!silent) {

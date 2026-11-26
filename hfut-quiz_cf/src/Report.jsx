@@ -25,6 +25,7 @@ import {
 import { Markdown } from './components/Markdown';
 import { formatDate } from './utils/date';
 import { normalizeQuestionId } from './utils/questionId';
+import { parseCulturalRelicsJson, RELICS_SUBJECT_ID, RELICS_CHAPTERS } from './utils/culturalRelics.js';
 import { safeGet, safeSet } from './utils/storage';
 import {
   getCachedThread,
@@ -54,6 +55,9 @@ const fetchLectureArrayBuffer = async (lecture) => {
 
 const getSubjectBadge = (questionId) => {
   const normId = String(normalizeQuestionId(questionId) || '');
+  if (normId.startsWith('RELICS-')) {
+    return { label: '文物精品', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300' };
+  }
   if (normId.startsWith('ENG-CUL-')) {
     return { label: '英美文化', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' };
   }
@@ -107,6 +111,7 @@ function Report() {
   const [maogaiBank, setMaogaiBank] = useState({});
   const [hgdmyMaogaiBank, setHgdmyMaogaiBank] = useState({});
   const [englishCultureBank, setEnglishCultureBank] = useState({});
+  const [culturalRelicsBank, setCulturalRelicsBank] = useState({});
 
   const [selectedDate, setSelectedDate] = useState(null);
   const [viewingQuestion, setViewingQuestion] = useState(null);
@@ -274,6 +279,29 @@ function Report() {
         }
       };
 
+      // 加载文物精品与中华文明题库
+      const loadCulturalRelics = async () => {
+        try {
+          const cacheKey = getBankCacheKey(RELICS_SUBJECT_ID);
+          const verKey = getBankCacheVersionKey(RELICS_SUBJECT_ID);
+          const [cachedR, cachedVer] = await Promise.all([safeGet(cacheKey), safeGet(verKey)]);
+          if (cachedR && Number(cachedVer) === BANK_CACHE_VERSION && Object.keys(cachedR).length > 0) {
+            setCulturalRelicsBank(cachedR);
+          } else {
+            const res = await fetch('/cultural-relics.json');
+            if (res.ok) {
+              const rawJson = await res.json();
+              const parsed = parseCulturalRelicsJson(rawJson);
+              setCulturalRelicsBank(parsed);
+              await safeSet(cacheKey, parsed);
+              await safeSet(verKey, BANK_CACHE_VERSION);
+            }
+          }
+        } catch (e) {
+          console.warn('Cultural relics bank load error', e);
+        }
+      };
+
       // 6. 加载自定义学科列表与本地自定义题库
       const loadCustom = async () => {
         try {
@@ -321,6 +349,7 @@ function Report() {
         loadMaogai(),
         loadHgdmy(),
         loadEnglishCulture(),
+        loadCulturalRelics(),
         loadCustom(),
         loadLocalProgress()
       ]);
@@ -362,6 +391,7 @@ function Report() {
     const isMaogai = qid.startsWith('MG-');
     const isHgdmy = qid.startsWith('HGD-MG-') || qid.startsWith('HGD-MG');
     const isEnglishCulture = qid.startsWith('ENG-CUL-');
+    const isCulturalRelics = qid.startsWith('RELICS-');
     const isCustom = qid.startsWith('custom_');
     if (selectedSubject && selectedSubject.startsWith('custom_')) {
       return qid.startsWith(selectedSubject);
@@ -369,7 +399,8 @@ function Report() {
     if (selectedSubject === 'maogai') return isMaogai && !isHgdmy;
     if (selectedSubject === 'hgdmy-maogai') return isHgdmy;
     if (selectedSubject === 'english-culture') return isEnglishCulture;
-    return !isMaogai && !isHgdmy && !isEnglishCulture && !isCustom;
+    if (selectedSubject === RELICS_SUBJECT_ID) return isCulturalRelics;
+    return !isMaogai && !isHgdmy && !isEnglishCulture && !isCustom && !isCulturalRelics;
   };
 
   const activeHistory = useMemo(
@@ -434,6 +465,11 @@ function Report() {
             if (q) return q;
           }
         }
+      }
+    } else if (normalizedQid.startsWith('RELICS-')) {
+      for (const chId in culturalRelicsBank) {
+        const q = culturalRelicsBank[chId]?.find((i) => i.id === normalizedQid);
+        if (q) return q;
       }
     } else if (normalizedQid.startsWith('ENG-CUL-')) {
       for (const chId in englishCultureBank) {
@@ -797,11 +833,11 @@ function Report() {
 
   const activeBank = selectedSubject && selectedSubject.startsWith('custom_')
     ? (customBanks[selectedSubject] || {})
-    : (selectedSubject === 'maogai' ? maogaiBank : selectedSubject === 'hgdmy-maogai' ? hgdmyMaogaiBank : selectedSubject === 'english-culture' ? englishCultureBank : innovationBank);
+    : (selectedSubject === 'maogai' ? maogaiBank : selectedSubject === 'hgdmy-maogai' ? hgdmyMaogaiBank : selectedSubject === 'english-culture' ? englishCultureBank : selectedSubject === RELICS_SUBJECT_ID ? culturalRelicsBank : innovationBank);
 
   const activeChapters = selectedSubject && selectedSubject.startsWith('custom_')
     ? (currentSubjectObj?.lectures || [])
-    : (selectedSubject === 'maogai' ? MAOGAO_CHAPTERS : selectedSubject === 'hgdmy-maogai' ? [{ id: 1, name: '全部题目' }] : selectedSubject === 'english-culture' ? ENGLISH_CULTURE_CHAPTERS : LECTURES);
+    : (selectedSubject === 'maogai' ? MAOGAO_CHAPTERS : selectedSubject === 'hgdmy-maogai' ? [{ id: 1, name: '全部题目' }] : selectedSubject === 'english-culture' ? ENGLISH_CULTURE_CHAPTERS : selectedSubject === RELICS_SUBJECT_ID ? RELICS_CHAPTERS : LECTURES);
 
   const nextModeMap = {
     system: 'light',
@@ -935,7 +971,7 @@ function Report() {
                   const qDetails = getQuestionDetails(id);
                   return qDetails && qDetails.category === l.name;
                 }
-                if (selectedSubject === 'maogai' || selectedSubject === 'english-culture') {
+                if (selectedSubject === 'maogai' || selectedSubject === 'english-culture' || selectedSubject === RELICS_SUBJECT_ID) {
                   const qDetails = getQuestionDetails(id);
                   return qDetails && qDetails.category === l.name;
                 }

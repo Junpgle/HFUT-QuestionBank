@@ -29,14 +29,14 @@ export async function updateLearning(user,subject,mutate){
   return exclusive(key(user,subject),async()=>{
     const old=await loadLearning(user,subject);
     const next=mutate(old);
-    await db.setItem(key(user,subject),next);
+    if(next!==old)await db.setItem(key(user,subject),next);
     return next;
   });
 }
 export function appendLearning(user,subject,e){
   return updateLearning(user,subject,old=>{
     // Give successive local events deterministic chronological order even within a millisecond.
-    const max=old.events.reduce((n,x)=>Math.max(n,x.at),0);
+    const max=old.events.reduce((n,x)=>x.at<=e.at+1000?Math.max(n,x.at):n,0);
     const at=Math.max(e.at,max+1);
     return {...old,events:unionEvents(old.events,[{...e,at,day:localDay(at)}])};
   });
@@ -84,5 +84,19 @@ export async function recordPractice(user,subject,questionId,isCorrect,usedHint=
     changed=true;
     return {...old,events:unionEvents(old.events,[makeLearningEvent('rate',{questionId,rating,source:'practice'},at)])};
   });
+  if(changed&&user&&!subject.startsWith('custom_'))scheduleLearningSync(user,subject);
   return changed?next:null;
+}
+
+// One timer per subject/account; no request per answer. Offline failures retain pending events.
+const timers=new Map();
+export function scheduleLearningSync(user,subject){
+  if(!user||subject.startsWith('custom_'))return;
+  const k=key(user,subject);
+  if(timers.has(k))return;
+  const timer=setTimeout(()=>{
+    timers.delete(k);
+    exchangeLearning(user,subject).catch(e=>console.warn('智能学习同步延后',e));
+  },15000);
+  timers.set(k,timer);
 }

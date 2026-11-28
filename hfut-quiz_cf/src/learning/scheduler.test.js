@@ -75,3 +75,13 @@ test('exam sprint includes early review only if estimated exam recall is low',()
   assert.ok(isReviewDue(card,p,now));
   assert.equal(isReviewDue({...card,stability:100},p,now),false);
 });
+
+test('target retention changes future intervals and scope metrics are independent',async()=>{
+  const {scopedActivity}=await import('./scheduler.js');
+  const c=rateCard({},3,t);
+  assert.ok(rateCard(c,3,t+DAY,.95).due<rateCard(c,3,t+DAY,.85).due);
+  const events=[ev('a','plan',{plan:p}),ev('b','intro',{questionId:'x'}),ev('c','intro',{questionId:'y'}),ev('d','rate',{questionId:'x',rating:3},t+180000)];
+  const state=replayEvents(events);
+  assert.equal(scopedActivity(['x'],state.byQuestion)[localDay(t)].new,1);
+  assert.equal(scopedActivity(['y'],state.byQuestion)[localDay(t)].attempts,0);
+});

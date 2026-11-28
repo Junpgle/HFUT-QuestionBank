@@ -7,10 +7,11 @@ function clean(e,subject){
   if(e.kind==='plan'){
     const p=e.plan;
     if(!p||!day(p.exam)||!Number.isInteger(p.reserve)||p.reserve<0||p.reserve>30||typeof p.scope!=='string'||p.scope.length>200)throw Error('无效考试计划');
-    return {...base,plan:{exam:p.exam,reserve:p.reserve,scope:p.scope}};
+    if(p.target!==undefined&&![.85,.9,.95].includes(p.target))throw Error('无效目标记忆率');
+    return {...base,plan:{exam:p.exam,reserve:p.reserve,scope:p.scope,target:p.target??.9}};
   }
   if(typeof e.questionId!=='string'||e.questionId.length>100||!prefixes[subject].test(e.questionId))throw Error('无效题目 ID');
-  if(e.kind==='intro')return {...base,questionId:e.questionId};
+  if(e.kind==='intro')return {...base,questionId:e.questionId,...(e.difficult===true?{difficult:true}:{})};
   if(e.kind==='rate'&&[1,2,3,4].includes(e.rating))return {...base,questionId:e.questionId,rating:e.rating,...(e.source==='practice'?{source:'practice'}:{})};
   throw Error('无效事件类型');
 }

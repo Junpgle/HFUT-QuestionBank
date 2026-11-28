@@ -12,7 +12,7 @@ export function recallProbability(card, now) {
 export function intervalDays(stability, target=0.9) {
   return clamp(Math.round(81*stability/19*(Math.pow(clamp(target,.8,.97),-2)-1)),1,36500);
 }
-export function rateCard(card, rating, now) {
+export function rateCard(card, rating, now, target=0.9) {
   if (![1,2,3,4].includes(rating)) throw new Error('Invalid rating');
   let d, s;
   const first = !card.stability;
@@ -33,7 +33,7 @@ export function rateCard(card, rating, now) {
   return {...card,difficulty:d,stability:s,lastReview:now,reps:(card.reps||0)+1,
     lapses:(card.lapses||0)+(rating===1&&!first&&card.phase==='review'?1:0),
     phase:short?(card.phase==='review'||card.phase==='relearning'?'relearning':'learning'):'review',
-    due:now+(short?(rating===1?5:10)*60000:(initial?1:intervalDays(s))*DAY),model:MODEL};
+    due:now+(short?(rating===1?5:10)*60000:(initial?1:intervalDays(s,target))*DAY),model:MODEL};
 }
 export function localDay(t=Date.now()) {
   // All Qbank exam plans use China Standard Time for consistent cross-device study days.
@@ -59,6 +59,7 @@ export function replayEvents(events) {
   let plan=null, step=0,lastId=null;
   const todayCounts=Object.create(null);
   const activity=Object.create(null);
+  const byQuestion=Object.create(null);
   for(const e of [...events].sort((a,b)=>a.at-b.at||a.id.localeCompare(b.id))) {
     if(seen.has(e.id))continue;
     seen.add(e.id);
@@ -68,8 +69,9 @@ export function replayEvents(events) {
       if(cards[id])continue;
       step++;lastId=id;
       const d=localDay(e.at);
-      cards[id]={phase:'learning',introducedDay:d,firstSeen:e.at,due:e.at+30000,eligibleStep:step+3,attempts:0};
+      cards[id]={phase:'learning',introducedDay:d,firstSeen:e.at,due:e.at+30000,eligibleStep:step+(e.difficult?2:3),attempts:0};
       (activity[d]??={new:0,attempts:0,success:0,crossDay:0,crossSuccess:0}).new++;
+      (byQuestion[id]??=[]).push({day:d,kind:'intro',at:e.at});
     }else if(e.kind==='rate'&&cards[id]){
       step++;lastId=id;
       const old=cards[id];
@@ -77,24 +79,25 @@ export function replayEvents(events) {
       // A quick positive repeat of an already-tested review does not postpone the real review.
       if(old.phase==='review'&&e.rating>=3&&localDay(old.lastReview)===attemptDay)continue;
       const attempts=old.attemptDay===attemptDay?(old.attempts||0)+1:1;
-      const next=rateCard(old,e.rating,e.at);
+      const next=rateCard(old,e.rating,e.at,plan?.target??.9);
       const defer=attempts>=4 && next.phase!=='review';
       cards[id]={...next,attemptDay,attempts,eligibleStep:step+3,due:defer?Math.max(next.due,nextDay(e.at)):next.due};
       const row=activity[attemptDay]??={new:0,attempts:0,success:0,crossDay:0,crossSuccess:0};
       row.attempts++;if(e.rating>=3)row.success++;
+      (byQuestion[id]??=[]).push({day:attemptDay,kind:'rate',at:e.at,rating:e.rating,crossDay:old.phase==='review'&&localDay(old.lastReview)!==attemptDay});
       if(old.phase==='review'){
         (todayCounts[attemptDay]??=new Set()).add(id);
         if(localDay(old.lastReview)!==attemptDay){row.crossDay++;if(e.rating>=3)row.crossSuccess++;}
       }
     }
   }
-  return {cards,plan,step,lastId,todayCounts,activity};
+  return {cards,plan,step,lastId,todayCounts,activity,byQuestion};
 }
 export function isReviewDue(card,plan,now){
   if(card?.phase!=='review'||localDay(card.lastReview)===localDay(now))return false;
   if(localDay(card.due)<=localDay(now))return true;
   const days=daysUntil(plan.exam,now);
-  return days<=plan.reserve&&localDay(now)<=plan.exam&&recallProbability(card,dayStart(plan.exam)+DAY/2)<.9;
+  return days<=plan.reserve&&localDay(now)<=plan.exam&&recallProbability(card,dayStart(plan.exam)+DAY/2)<(plan.target??.9);
 }
 export function memoryLevel(card,now){
   if(!card)return 'new';
@@ -133,4 +136,14 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   // Single-question review sessions must still be usable on the next day.
   const single=ids.find(id=>id===lastId&&isReviewDue(cards[id],plan,now));
   return single?{id:single,kind:'review'}:null;
+}
+
+export function scopedActivity(ids,byQuestion){
+  const out=Object.create(null);
+  for(const id of ids)for(const e of byQuestion[id]||[]){
+    const r=out[e.day]??={new:0,attempts:0,success:0,crossDay:0,crossSuccess:0};
+    if(e.kind==='intro')r.new++;
+    else {r.attempts++;if(e.rating>=3)r.success++;if(e.crossDay){r.crossDay++;if(e.rating>=3)r.crossSuccess++;}}
+  }
+  return out;
 }

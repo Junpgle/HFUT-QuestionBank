@@ -1,5 +1,5 @@
 import {useMemo,useState} from 'react';
-import {memoryLevel,recallProbability,dayStart,localDay,DAY,isReviewDue} from '../learning/scheduler';
+import {memoryLevel,recallProbability,dayStart,localDay,DAY} from '../learning/scheduler';
 const labels={new:'未学习',weak:'待巩固 / 薄弱',learning:'巩固中',stable:'记忆稳定',long:'长期记忆'};
 const colors={new:'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200',weak:'bg-rose-600 text-white',learning:'bg-amber-400 text-slate-950',stable:'bg-emerald-500 text-slate-950',long:'bg-emerald-800 text-white'};
 export default function MemoryReport({ids,cards,activity,bank,now,exam,onPractice}){

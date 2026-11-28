@@ -248,11 +248,30 @@ test('legacy one-pass mastery is recalculated; unspaced repeats never graduate a
 });
 test('successful rounds do not consume the consecutive-failure allowance and fuzzy review requires recheck',()=>{
  const plan={...p,exam:localDay(t+10*DAY),reserve:0};
- const events=[ev('p','plan',{plan}),ev('i','intro',{questionId:'a'}),ev('r1','rate',{questionId:'a',rating:3},t+1000),ev('r2','rate',{questionId:'a',rating:3},t+61000),ev('f','rate',{questionId:'a',rating:2},t+181000),ev('r3','rate',{questionId:'a',rating:3},t+182000)];
+ const events=[ev('p','plan',{plan}),ev('i','intro',{questionId:'a'}),ev('r1','rate',{questionId:'a',rating:3},t+1000),ev('r2','rate',{questionId:'a',rating:3},t+61000),ev('f','rate',{questionId:'a',rating:2},t+181000),ev('r3','rate',{questionId:'a',rating:3},t+301000)];
  const passed=replayEvents(events);
  assert.equal(passed.cards.a.phase,'review');assert.equal(passed.cards.a.failureStreak,0);
  assert.equal(passed.cards.a.attempts,4);
  assert.equal(passed.cards.a.strengthCount,3);
- const fuzzy=replayEvents([...events,ev('rf','rate',{questionId:'a',rating:2},t+DAY+182000)]);
+ const fuzzy=replayEvents([...events,ev('rf','rate',{questionId:'a',rating:2},t+DAY+301000)]);
  assert.equal(fuzzy.cards.a.phase,'relearning');assert.equal(fuzzy.cards.a.strengthCount,2);
+});
+
+test('fuzzy feedback cannot bypass spacing after earlier success',()=>{
+ const plan={...p,exam:localDay(t+10*DAY),reserve:0};
+ const events=[ev('p','plan',{plan}),ev('i','intro',{questionId:'a'}),ev('r','rate',{questionId:'a',rating:3},t+1000),ev('f','rate',{questionId:'a',rating:2},t+2000)];
+ const state=replayEvents(events);
+ assert.equal(state.cards.a.strengthCount,1);
+ assert.equal(chooseEarlyRecall({ids:['a'],state,now:t+2001}),null);
+ const immediate=replayEvents([...events,ev('again','rate',{questionId:'a',rating:4},t+3000)]);
+ assert.equal(immediate.cards.a.strengthCount,1);
+});
+test('near exam extends consecutive failure allowance but keeps graduation requirement',()=>{
+ const plan={...p,exam:localDay(t+2*DAY),reserve:0};
+ const events=[ev('p','plan',{plan}),ev('i','intro',{questionId:'a'}),...[1,2,3,4].map(i=>ev('f'+i,'rate',{questionId:'a',rating:1,relearned:true},t+i*1000))];
+ const four=replayEvents(events);
+ assert.equal(four.cards.a.strengthCount,0);
+ assert.ok(chooseEarlyRecall({ids:['a'],state:four,now:t+4000}));
+ const six=replayEvents([...events,ev('f5','rate',{questionId:'a',rating:1,relearned:true},t+5000),ev('f6','rate',{questionId:'a',rating:1,relearned:true},t+6000)]);
+ assert.equal(chooseEarlyRecall({ids:['a'],state:six,now:t+6000}),null);
 });

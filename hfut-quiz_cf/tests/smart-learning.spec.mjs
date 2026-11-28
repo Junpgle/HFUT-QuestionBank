@@ -214,9 +214,18 @@ test('legacy one-success card is demoted and shows remaining reinforcement',asyn
  await button(page,'开始今日学习').click();
  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
  await expect(page.getByLabel('短时强化 1/3')).toBeVisible();
+ const orderBefore=await page.getByRole('button',{name:/正确选项甲|错误选项乙/}).allTextContents();
  await page.getByRole('button',{name:/正确选项甲/}).click();
  await button(page,'很熟悉').click();
  await returnPlan(page);
  await expect(page.getByText(/进入复习 0 题/)).toBeVisible();
  expect(await page.evaluate(()=>window.__learningAttempts.length)).toBe(1);
+ await page.clock.runFor(125000);
+ await selectCard(page,1);
+ await expect(page.getByLabel('短时强化 2/3')).toBeVisible();
+ expect(await page.getByRole('button',{name:/正确选项甲|错误选项乙/}).allTextContents()).not.toEqual(orderBefore);
+ await page.getByRole('button',{name:/正确选项甲/}).click();
+ await button(page,'记得').click();
+ await returnPlan(page);
+ await expect(page.getByText(/进入复习 1 题/)).toBeVisible();
 });

@@ -109,7 +109,8 @@ export function replayEvents(events) {
         if(old.phase==='review')strengthCount=REQUIRED_STRENGTHENING-1;
         phase=old.phase==='review'||old.phase==='relearning'?'relearning':'learning';
         due=e.at;eligibleStep=step+FUZZY_RECALL_STEPS;
-        strengthAt=0;strengthStep=0;minRecallAt=0;
+        // Preserve earned progress, but seeing the answer starts a fresh spacing interval.
+        strengthAt=strengthCount?e.at:0;strengthStep=strengthCount?step:0;minRecallAt=strengthCount?e.at+smallQueueDelay(strengthCount):0;
       }else if(old.phase!=='review'){
         // Replay existing events as evidence too, but reject consecutive unspaced positives.
         if(!old.pendingRelearn&&hasStrengthSpacing(old,previousStep,previousId,id,e.at)){

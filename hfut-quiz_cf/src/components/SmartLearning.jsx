@@ -220,8 +220,13 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
           const snap={task,q,answer:snapAnswer,rating};
           const e=task.kind==='relearn'?event('intro',{questionId:q.id,relearnOf:state.cards[q.id]?.pendingRelearn}):task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating,...(rating===1&&snapAnswer.relearning?{relearned:true}:{})});
           const stats=task.kind==='relearn'?null:learningAttempt(q,task,snapAnswer,rating,e);
-          // Shared mastery counts only after the final required successful recall.
-          if(stats&&rating>=3&&replayEvents([...(data?.events||[]),e]).cards[q.id]?.phase!=='review')stats.countMastered=false;
+          // Ordinary practice keeps its own configured correct-streak threshold.
+          // Only independently earned successful rounds contribute to that streak.
+          if(stats&&rating>=3&&state.cards[q.id]?.phase!=='review'){
+            const before=state.cards[q.id]?.strengthCount||0;
+            const after=replayEvents([...(data?.events||[]),e]).cards[q.id]?.strengthCount||0;
+            if(after<=before)stats.countMastered=false;
+          }
           const ok=await commit(e,stats);
           if(ok&&alive.current){setHistory(prev=>[...prev.slice(-49),snap]);setHistoryIndex(null);setInspectId(null);}
           return ok;

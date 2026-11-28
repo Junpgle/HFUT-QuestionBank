@@ -2,6 +2,7 @@ import {useState, useEffect, useLayoutEffect, useRef, useMemo} from 'react';
 import {flushSync} from 'react-dom';
 import {api} from './api';
 import {loadSiteMetrics,readSiteMetricsCache} from './utils/siteMetrics';
+import {useStarNotice} from './utils/useStarNotice';
 import localforage from 'localforage';
 import {
     BookOpen, CheckCircle, Brain, Settings,
@@ -90,6 +91,7 @@ import {
 } from './utils/theme';
 
 function App() {
+    const starNotice=useStarNotice();
     const initialUser = api.getCurrentUser();
     const [currentUser, setCurrentUser] = useState(initialUser);
     const [showLoginScreen, setShowLoginScreen] = useState(false);
@@ -2998,6 +3000,8 @@ function App() {
                 onToggleFullscreen={toggleFullscreen}
                 onlineCount={onlineCount}
                 siteMetrics={siteMetrics}
+                showStarNotice={starNotice.show}
+                onDismissStarNotice={starNotice.close}
             />
             {renderSubjectSelectionModal()}
         </>

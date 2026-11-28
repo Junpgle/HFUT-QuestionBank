@@ -1,6 +1,6 @@
 import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { BookOpen, Brain, ChevronLeft, ChevronRight, DownloadCloud, FileDown, FileUp, Github, GraduationCap, Info, Loader2, Maximize, Minimize, Settings, Trash2, UploadCloud, User, Users, Eye, Wand2 } from 'lucide-react';
+import { BookOpen, Brain, ChevronLeft, ChevronRight, DownloadCloud, FileDown, FileUp, Github, GraduationCap, Info, Loader2, Maximize, Minimize, Settings, Trash2, UploadCloud, User, Users, Eye, Wand2, Star, X } from 'lucide-react';
 import mottos from './data/mottos.json';
 import { formatDate } from './utils/date';
 import {displayOnlineCount,displayMetricCount} from './utils/siteMetrics';
@@ -37,6 +37,8 @@ export const SubjectSelector = ({
     onToggleFullscreen,
     onlineCount,
     siteMetrics,
+    showStarNotice,
+    onDismissStarNotice,
 }) => {
     const isGuest = !currentUser;
     const runLocalTransition = (callback) => {
@@ -278,6 +280,14 @@ export const SubjectSelector = ({
                     </div>
                     <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-slate-800 tracking-tight dark:text-slate-100">HFUT 刷题系统</h1>
                     <p className="text-slate-500 mt-2 font-semibold text-xs sm:text-sm md:text-base dark:text-slate-400">{motto}</p>
+                    
+                    {showStarNotice && (
+                        <div role="status" className="mt-4 w-full max-w-xl flex items-center gap-2.5 text-left rounded-xl border border-blue-100 bg-blue-50/80 px-3.5 py-2.5 text-sm text-slate-700 animate-fade-in dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-slate-200">
+                            <Star size={17} className="shrink-0 text-amber-500" aria-hidden="true"/>
+                            <span className="flex-1 leading-relaxed text-xs sm:text-sm font-medium">觉得有用？欢迎来 <a href="https://github.com/Junpgle/HFUT-QuestionBank" target="_blank" rel="noopener noreferrer" className="font-bold text-blue-700 hover:underline dark:text-blue-400">GitHub Star</a>！</span>
+                            <button type="button" onClick={onDismissStarNotice} aria-label="关闭 GitHub Star 通知" title="关闭通知" className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-blue-100 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-blue-900/50 dark:hover:text-slate-200"><X size={16} aria-hidden="true"/></button>
+                        </div>
+                    )}
                     
                     {/* 快捷直达操作菜单 */}
                     <div className="flex justify-center gap-2 sm:gap-3 mt-6 flex-wrap relative z-30">

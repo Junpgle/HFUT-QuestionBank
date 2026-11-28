@@ -252,6 +252,7 @@ export function QuizQuestionPanel({
                   <input
                     ref={(el) => { inputRefs.current[idx] = el; }}
                     type="text"
+                    aria-label={`填空 ${idx+1}`}
                     value={fillInputs[idx] || ''}
                     disabled={isAnswered}
                     autoComplete="off"
@@ -378,6 +379,7 @@ export function QuizQuestionPanel({
               return (
                 <button
                   key={idx}
+                  aria-pressed={isQuiz&&!isAnswered?selectedIndices.includes(idx):undefined}
                   onClick={() => onOptionClick(idx)}
                   className={`w-full p-3.5 sm:p-4 md:p-5 rounded-xl text-left border-2 transition-all flex items-start gap-3 md:gap-4 group relative
                     ${status === 'default' ? 'border-slate-100 bg-white hover:border-blue-200 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900/60 dark:hover:border-blue-900/60 dark:hover:bg-slate-850' : ''}

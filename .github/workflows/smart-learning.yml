@@ -5,9 +5,10 @@ on:
       - 'hfut-quiz_cf/**'
       - 'hfut-backend/**'
       - '.github/workflows/smart-learning.yml'
-  push:
-    branches:
-      - feat/smart-learning
+  workflow_dispatch:
+concurrency:
+  group: smart-learning-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

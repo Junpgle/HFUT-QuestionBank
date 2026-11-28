@@ -831,7 +831,7 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
               <textarea
                 value={answer.text||''}
                 onChange={e=>patch({text:e.target.value})}
-                placeholder="先独立回忆，可在此输入要点…"
+                aria-label="先独立回忆，可在此输入要点" placeholder="先独立回忆，可在此输入要点…"
                 className="mt-5 w-full rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-800 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:bg-slate-800"
                 rows={5}
               />
@@ -886,7 +886,7 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
             </div>
           )}
           <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-green-600 dark:text-green-400">参考答案</div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-green-600 dark:text-green-400">参考答案</h3>
             <div className="mt-1.5 whitespace-pre-wrap text-sm sm:text-base font-medium leading-relaxed text-slate-800 dark:text-slate-100 break-words">
               {solution}
             </div>

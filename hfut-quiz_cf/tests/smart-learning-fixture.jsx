@@ -10,4 +10,5 @@ const bank={1:[
 {id:'MG-5',type:'judgment',question:'测试判断：第五题',options:['正确','错误'],rawAnswer:[1],explanation:'测试解析壬',category:'第二章'}
 ]};
 const empty=new Set();
-createRoot(document.getElementById('root')).render(<React.StrictMode><SmartLearning subject="maogai" subjectName="测试题库" bank={bank} user={null} wrongIds={empty} brushedIds={empty} onBack={()=>{}}/></React.StrictMode>);
+window.__learningAttempts=[];
+createRoot(document.getElementById('root')).render(<React.StrictMode><SmartLearning subject="maogai" subjectName="测试题库" bank={bank} user={null} wrongIds={empty} brushedIds={empty} onBack={()=>{}} onAttempt={a=>window.__learningAttempts.push(a)}/></React.StrictMode>);

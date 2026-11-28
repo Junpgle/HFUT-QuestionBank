@@ -31,7 +31,7 @@ const allowedOrigins = new Set([
 function isLocalOrigin(origin) {
   try {
     const url = new URL(origin)
-    return url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
   } catch {
     return false
   }
@@ -72,6 +72,7 @@ app.use('/api/*', async (c, next) => {
     '/api/register',
     '/api/onlineCount',
     '/api/site-metrics/visit',
+    '/api/site-metrics',
     '/api/verify-email',
     '/api/password-reset/request',
     '/api/password-reset/confirm',

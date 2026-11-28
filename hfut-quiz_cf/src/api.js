@@ -102,6 +102,9 @@ export const api = {
   },
 
   // A simple public POST avoids CORS preflight and does not send account tokens.
+  async readSiteMetrics() {
+    return this.request('/site-metrics','GET',null,{skipAuth:true,cache:'no-store'});
+  },
   async recordSiteVisit(visitId) {
     const response=await fetch(API_BASE+'/site-metrics/visit',{
       method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:visitId,cache:'no-store',credentials:'omit'

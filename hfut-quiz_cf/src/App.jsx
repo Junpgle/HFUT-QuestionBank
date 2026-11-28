@@ -343,11 +343,13 @@ function App() {
     const [siteMetrics,setSiteMetrics]=useState(readSiteMetricsCache);
     useEffect(()=>{
         // Do not count local development/preview traffic. Guests and signed-in users count alike.
-        if(!['https://qbank.junpgle.me','https://cxcy.junpgle.me'].includes(window.location.origin))return;
+        const production=['https://qbank.junpgle.me','https://cxcy.junpgle.me'].includes(window.location.origin);
+        const local=['localhost','127.0.0.1','[::1]'].includes(window.location.hostname);
+        if(!production&&!local)return;
         let active=true;
-        const load=()=>loadSiteMetrics(api).then(data=>{
+        const load=()=>loadSiteMetrics(api,{readOnly:!production}).then(data=>{
             if(active){setSiteMetrics(data);if(data.onlineCount!==null)setOnlineCount(data.onlineCount);}
-        }).catch(()=>{});
+        }).catch(err=>console.warn('站点统计获取失败',err.message));
         if(navigator.onLine!==false)load();
         window.addEventListener('online',load);
         return ()=>{active=false;window.removeEventListener('online',load);};

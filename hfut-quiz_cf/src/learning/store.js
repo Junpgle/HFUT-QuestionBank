@@ -134,7 +134,7 @@ export async function recordPractice(user,subject,questionId,isCorrect,usedHint=
     const card=cards[questionId];
     if(!plan||!card)return old;
     const rating=!isCorrect||usedHint?1:3;
-    if(rating===3&&((card.lastReview&&localDay(card.lastReview)===localDay(at))||card.due>at&&card.phase!=='review'))return old;
+    if(rating===3&&((card.phase==='review'&&card.lastReview&&localDay(card.lastReview)===localDay(at))||card.due>at&&card.phase!=='review'))return old;
     changed=true;
     return {...old,events:unionEvents(old.events,[makeLearningEvent('rate',{questionId,rating,source:'practice'},at)])};
   });

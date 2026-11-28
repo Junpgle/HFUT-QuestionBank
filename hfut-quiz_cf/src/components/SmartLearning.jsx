@@ -25,7 +25,7 @@ import {readDraft,writeDraft,validDraft,cardVersion} from '../learning/session';
 import {learningAttempt} from '../learning/attempt';
 import {ignoreQuizShortcut,optionShortcutIndex} from '../utils/quizShortcuts';
 import {gradeFill,parseFillAnswer} from '../utils/fillAnswer';
-import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY,questionMemoryStage,MEMORY_STAGES,todayQuestionIds,learningGridStatus,chooseEarlyRecall} from '../learning/scheduler';
+import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY,questionMemoryStage,MEMORY_STAGES,todayQuestionIds,learningGridStatus,chooseEarlyRecall,REQUIRED_STRENGTHENING,canRetryToday} from '../learning/scheduler';
 import {loadLearning,appendLearning,exchangeLearning,makeLearningEvent,unionEvents,scheduleLearningSync,subscribeLearning,importLearning} from '../learning/store';
 
 const surface='rounded-[1.5rem] md:rounded-[2rem] border border-slate-200/90 bg-white p-4 sm:p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900';
@@ -111,7 +111,9 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   const pending=ids.filter(id=>state.cards[id]&&state.cards[id].phase!=='review').length;
   const due=ids.filter(id=>state.plan&&isReviewDue(state.cards[id],state.plan,now)).length;
   const shortToday=ids.filter(id=>state.cards[id]&&state.cards[id].phase!=='review'&&localDay(state.cards[id].due)<=localDay(now)).length;
-  const estimatedMinutes=Math.ceil(((plan?.remainingNew||0)*45+due*20+shortToday*20)/60);
+  const todayStrengthened=ids.filter(id=>state.cards[id]?.introducedDay===localDay(now)&&state.cards[id]?.phase==='review').length;
+  const shortRemaining=ids.reduce((n,id)=>{const c=state.cards[id];return n+(c&&c.phase!=='review'&&canRetryToday(c,now)?Math.max(1,REQUIRED_STRENGTHENING-(c.strengthCount||0)):0);},0);
+  const estimatedMinutes=Math.ceil(((plan?.remainingNew||0)*(45+3*20)+due*20+shortRemaining*20)/60);
   const completedReviews=ids.filter(id=>state.todayCounts[localDay(now)]?.has(id)).length;
   const activity=useMemo(()=>scopedActivity(ids,state.byQuestion),[ids,state.byQuestion]);
   const waitUntil=nextShortTime(ids,state,now);
@@ -127,7 +129,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   useEffect(()=>{if(task)scrollRef.current?.scrollTo({top:0});},[task]);
 
   function saveAnswer(answer){const d={...(draftRef.current||draft),answer};draftRef.current=d;setDraft(d);setDraftWarning(!writeDraft(user,subject,d));}
-  function start(extraMode=false,id=null){setInspectId(null);setShowLearnedGrid(false);setSessionQuestionIds([...new Set([...todayIds,...(id?[id]:canResume?[draft.task.id]:[])])]);setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?.pendingRelearn?'relearn':state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
+  function start(extraMode=false,id=null){if(id&&state.cards[id]&&!canRetryToday(state.cards[id],now)){setError('此题今天连续回忆未成功，已安排次日继续巩固。');return;}setInspectId(null);setShowLearnedGrid(false);setSessionQuestionIds([...new Set([...todayIds,...(id?[id]:canResume?[draft.task.id]:[])])]);setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?.pendingRelearn?'relearn':state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
   async function download(){try{const current=await loadLearning(user,subject);const url=URL.createObjectURL(new Blob([JSON.stringify(makeBackup(subject,current.events),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='Qbank-智能学习-'+subject+'-'+localDay()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError('备份导出失败');}}
   async function readBackup(e){const file=e.target.files?.[0];e.target.value='';if(!file)return;try{if(file.size>LIMIT)throw Error('备份文件超过 20 MB 上限');setBackupPreview(parseBackup(await file.text(),subject,all.map(q=>q.id)));setError('');}catch(err){setBackupPreview(null);setError(err.message||'备份格式错误');}}
   async function restore(){if(lock.current||!backupPreview)return;lock.current=true;setBusy(true);try{const next=await importLearning(user,subject,backupPreview);setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));const p=replayEvents(next.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}setBackupPreview(null);setSyncMessage('备份已合并，本地已有事件未覆盖');}catch{setError('备份导入失败，原数据未清除');}finally{lock.current=false;setBusy(false);}}
@@ -190,6 +192,8 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         plan={plan}
         due={due}
         pending={pending}
+        todayStrengthened={todayStrengthened}
+        shortToday={shortToday}
         completedReviews={completedReviews}
         waitUntil={waitUntil}
         canEarlyRecall={Boolean(earlyRecall)}
@@ -215,7 +219,10 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
           const snapAnswer={...(draftRef.current||draft)?.answer};
           const snap={task,q,answer:snapAnswer,rating};
           const e=task.kind==='relearn'?event('intro',{questionId:q.id,relearnOf:state.cards[q.id]?.pendingRelearn}):task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating,...(rating===1&&snapAnswer.relearning?{relearned:true}:{})});
-          const ok=await commit(e,task.kind==='relearn'?null:learningAttempt(q,task,snapAnswer,rating,e));
+          const stats=task.kind==='relearn'?null:learningAttempt(q,task,snapAnswer,rating,e);
+          // Shared mastery counts only after the final required successful recall.
+          if(stats&&rating>=3&&replayEvents([...(data?.events||[]),e]).cards[q.id]?.phase!=='review')stats.countMastered=false;
+          const ok=await commit(e,stats);
           if(ok&&alive.current){setHistory(prev=>[...prev.slice(-49),snap]);setHistoryIndex(null);setInspectId(null);}
           return ok;
         }}
@@ -416,8 +423,9 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
                         {[
                           ['距离考试',plan.days+' 天'],
                           ['今日新题',plan.todayNew+' / '+Math.max(plan.quota,plan.todayNew)],
+                          ['新题巩固完成',todayStrengthened+' / '+plan.todayNew],
                           ['今日复习',completedReviews+' / '+(completedReviews+due)],
-                          ['待巩固',pending+' 题'],
+                          ['今日待巩固',shortToday+' 题'],
                         ].map(([label,value])=>(
                           <article key={label} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-800/40 min-w-0">
                             <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
@@ -525,7 +533,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
                     <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 [text-wrap:balance]">今日学习任务</h2>
                     <p className="text-sm text-slate-500 dark:text-slate-400 [text-wrap:pretty]">
                       {due>0||pending>0
-                        ?`当前有 ${due} 道到期复习与 ${pending} 道待巩固题目`
+                        ?`当前有 ${due} 道到期复习与 ${shortToday} 道今日待巩固题目`
                         :plan.remainingNew>0
                           ?`今日还需学习 ${plan.remainingNew} 道新题`
                           :'今日计划已达标，可继续额外学习新题'}
@@ -620,7 +628,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 }
 
 function SmartLearningSession({
-  q,task,card,questionGrid,onSelectGrid,showLearnedGrid,onToggleLearnedGrid,olderLearnedCount,isInspection=false,plan,due,pending,completedReviews,waitUntil,canEarlyRecall,onEarlyRecall,canExtraNew,onExtraNew,now,busy,error,draftWarning,answer,
+  q,task,card,questionGrid,onSelectGrid,showLearnedGrid,onToggleLearnedGrid,olderLearnedCount,isInspection=false,plan,due,pending,todayStrengthened,shortToday,completedReviews,waitUntil,canEarlyRecall,onEarlyRecall,canExtraNew,onExtraNew,now,busy,error,draftWarning,answer,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onExit,onDone,
 }){
@@ -664,8 +672,9 @@ function SmartLearningSession({
               <div className="grid grid-cols-1 gap-2">
                 {[
                   ['今日新题',`${plan.todayNew} / ${Math.max(plan.quota,plan.todayNew)}`],
+                  ['新题巩固完成',`${todayStrengthened} / ${plan.todayNew}`],
                   ['今日复习',`${completedReviews} / ${completedReviews+due}`],
-                  ['待巩固',`${pending} 题`],
+                  ['今日待巩固',`${shortToday} 题`],
                 ].map(([label,val])=>(
                   <div key={label} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-xs dark:border-slate-800 dark:bg-slate-950/50">
                     <span className="text-slate-500 dark:text-slate-400 font-medium">{label}</span>
@@ -699,7 +708,7 @@ function SmartLearningSession({
             智能学习
           </span>
           <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
-            待学 {due+pending}
+            待学 {due+shortToday}
           </span>
         </div>
 
@@ -822,6 +831,7 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onTog
 
 function QuestionStageProgress({card,now,isHistory,historyPos,relearning=false}){
   const stage=relearning?{index:1,label:'重新学习',detail:'重新记忆正确答案，之后再次独立回忆'}:questionMemoryStage(card,now);
+  const strength=relearning?0:card?.phase==='review'?REQUIRED_STRENGTHENING:card?.strengthCount||0;
   const tone=stage.index===1?'bg-amber-500 dark:bg-amber-400':stage.index>=3?'bg-emerald-500 dark:bg-emerald-400':'bg-indigo-500 dark:bg-indigo-400';
   return (
     <div className="flex items-center gap-2 sm:gap-3 min-w-0 px-1 text-xs leading-5" title={MEMORY_STAGES.join(' → ')+'；'+stage.detail}>
@@ -835,6 +845,7 @@ function QuestionStageProgress({card,now,isHistory,historyPos,relearning=false})
         ))}
       </div>
       <span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">{stage.index+1}/{MEMORY_STAGES.length}</span>
+      {card&&stage.index===1&&<span aria-label={'短时强化 '+strength+'/'+REQUIRED_STRENGTHENING} className="shrink-0 text-[10px] tabular-nums text-indigo-600 dark:text-indigo-400">强化 {strength}/{REQUIRED_STRENGTHENING}</span>
       {isHistory&&<span className="ml-auto truncate text-slate-500 dark:text-slate-400">{historyPos?'回顾 '+historyPos:'历史回顾'}</span>}
     </div>
   );
@@ -847,6 +858,15 @@ function SmartLearningQuestion({
 }){
   const intro=task.kind==='intro';
   const selected=answer.selected||[],inputs=answer.inputs||[],result=answer.result||null;
+  const order=useMemo(()=>{
+    const original=Array.from({length:q.options?.length||0},(_,i)=>i);
+    if(isHistory||intro||!['single','multiple'].includes(q.type)||original.length<2||[q.question,...q.options].some(x=>/以上[各全都均]|上述|[A-HＡ-Ｈ]\s*(和|与|、|及|项|选项)|选项\s*[A-HＡ-Ｈ]|all of the above|none of the above/i.test(String(x))))return original;
+    let seed=Array.from(String(q.id)).reduce((n,c)=>(Math.imul(n,31)+c.charCodeAt(0))>>>0,2166136261);
+    for(let i=original.length-1;i>0;i--){seed=(Math.imul(seed,1664525)+1013904223)>>>0;const j=seed%(i+1);[original[i],original[j]]=[original[j],original[i]];}
+    const shift=(card?.reps||0)%original.length;
+    return [...original.slice(shift),...original.slice(0,shift)];
+  },[q,card?.reps,intro,isHistory]);
+  const shuffledQ=useMemo(()=>['single','multiple'].includes(q.type)?{...q,options:order.map(i=>q.options[i]),rawAnswer:order.flatMap((i,k)=>correctIndices(q).includes(i)?[k]:[])}:q,[q,order]);
   const relearning=!isHistory&&(task.kind==='relearn'||(!intro&&answer.relearning===true));
   const show=isHistory||intro||relearning||result!==null;
   const big=q.type==='big';
@@ -890,8 +910,9 @@ function SmartLearningQuestion({
       }
       if(!show){
         if(!big&&q.type!=='fill'&&Array.isArray(q.options)){
-          const idx=optionShortcutIndex(key,q.options.length);
-          if(idx>=0){
+          const shownIndex=optionShortcutIndex(key,q.options.length);
+          const idx=order[shownIndex];
+          if(shownIndex>=0&&idx!==undefined){
             e.preventDefault();
             if(q.type==='multiple')patch({selected:selected.includes(idx)?selected.filter(x=>x!==idx):[...selected,idx]});
             else submit([idx]);
@@ -1031,12 +1052,12 @@ function SmartLearningQuestion({
           </div>
         ):(
           <QuizQuestionPanel
-            currentQ={q}
+            currentQ={shuffledQ}
             isQuiz={!isInspection&&!intro&&!relearning&&!(result==='forgot')}
             isAnswered={show}
-            selectedIndices={selected}
+            selectedIndices={['single','multiple'].includes(q.type)?order.flatMap((i,k)=>selected.includes(i)?[k]:[]):selected}
             fillInputs={inputs}
-            onOptionClick={i=>{if(show||busy||isHistory)return;if(q.type==='multiple')patch({selected:selected.includes(i)?selected.filter(x=>x!==i):[...selected,i]});else submit([i]);}}
+            onOptionClick={shownIndex=>{if(show||busy||isHistory)return;const i=order[shownIndex];if(i===undefined)return;if(q.type==='multiple')patch({selected:selected.includes(i)?selected.filter(x=>x!==i):[...selected,i]});else submit([i]);}}
             onSubmit={()=>submit()}
             onFillInputChange={(i,v)=>{if(isHistory)return;const next=[...inputs];next[i]=v;patch({inputs:next});}}
             onFillSubmit={({usedHint}={})=>{if(show||busy||isHistory)return;patch({usedHint:!!usedHint,result:gradeFill(inputs,parseFillAnswer(q.options?.[0],q.question)).isCorrect?(usedHint?'hint':'correct'):'wrong'});}}

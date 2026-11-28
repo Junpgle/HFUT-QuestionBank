@@ -7,6 +7,11 @@ const FIRST_RECALL_STEPS=2;
 const HARD_FIRST_RECALL_STEPS=1;
 const FAILED_RECALL_STEPS=2;
 const FUZZY_RECALL_STEPS=3;
+export const REQUIRED_STRENGTHENING=3;
+const strengtheningGap=(count,rating)=>count===1?(rating===4?7:5):(rating===4?15:10);
+const smallQueueDelay=count=>count===1?60000:120000;
+const failureLimit=(plan,now)=>plan&&daysUntil(plan.exam,now)<=3?6:4;
+const hasStrengthSpacing=(c,step,lastId,id,now)=>!c.strengthAt||localDay(c.strengthAt)!==localDay(now)||now>=c.minRecallAt||(step>c.strengthStep&&lastId!==id);
 const W = [0.4872,1.4003,3.7145,13.8206,5.1618,1.2298,0.8975,0.031,1.6474,0.1367,1.0461,2.1072,0.0793,0.3246,1.587,0.2272,2.8755];
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 export const MODEL = 'fsrs-4.5-qbank-1';
@@ -83,19 +88,45 @@ export function replayEvents(events) {
       if(cards[id])continue;
       step++;lastId=id;
       const d=localDay(e.at);
-      cards[id]={phase:'learning',introducedDay:d,firstSeen:e.at,due:e.at+FIRST_RECALL_DELAY,eligibleStep:step+(e.difficult?HARD_FIRST_RECALL_STEPS:FIRST_RECALL_STEPS),attempts:0};
+      cards[id]={phase:'learning',introducedDay:d,firstSeen:e.at,due:e.at+FIRST_RECALL_DELAY,eligibleStep:step+(e.difficult?HARD_FIRST_RECALL_STEPS:FIRST_RECALL_STEPS),attempts:0,strengthCount:0};
       (activity[d]??={new:0,attempts:0,success:0,crossDay:0,crossSuccess:0}).new++;
       (byQuestion[id]??=[]).push({day:d,kind:'intro',at:e.at});
     }else if(e.kind==='rate'&&cards[id]){
+      const old=cards[id],previousId=lastId,previousStep=step;
       step++;lastId=id;
-      const old=cards[id];
       const attemptDay=localDay(e.at);
-      // A quick positive repeat of an already-tested review does not postpone the real review.
+      // Preserve the established FSRS rule for redundant positive same-day reviews.
       if(old.phase==='review'&&e.rating>=3&&localDay(old.lastReview)===attemptDay)continue;
       const attempts=old.attemptDay===attemptDay?(old.attempts||0)+1:1;
+      const failureStreak=e.rating>=3?0:(old.attemptDay===attemptDay?(old.failureStreak||0):0)+1;
       const next=rateCard(old,e.rating,e.at,plan?.target??.9);
-      const defer=attempts>=4 && next.phase!=='review';
-      cards[id]={...next,pendingRelearn:e.rating===1&&!e.relearned?e.id:null,relearnedAt:e.rating===1&&e.relearned?e.at:null,attemptDay,attempts,eligibleStep:step+(e.rating===1?FAILED_RECALL_STEPS:FUZZY_RECALL_STEPS),due:defer?Math.max(next.due,nextDay(e.at)):next.due};
+      let strengthCount=old.strengthCount||0,strengthAt=old.strengthAt||0,strengthStep=old.strengthStep||0,minRecallAt=old.minRecallAt||0;
+      let eligibleStep=step,phase=next.phase,due=next.due;
+      if(e.rating===1){
+        strengthCount=0;strengthAt=0;strengthStep=0;minRecallAt=0;eligibleStep=step+FAILED_RECALL_STEPS;
+      }else if(e.rating===2){
+        // A fuzzy review is not a clean success: require another independent check today.
+        if(old.phase==='review')strengthCount=REQUIRED_STRENGTHENING-1;
+        phase=old.phase==='review'||old.phase==='relearning'?'relearning':'learning';
+        due=e.at;eligibleStep=step+FUZZY_RECALL_STEPS;
+        strengthAt=0;strengthStep=0;minRecallAt=0;
+      }else if(old.phase!=='review'){
+        // Replay existing events as evidence too, but reject consecutive unspaced positives.
+        if(!old.pendingRelearn&&hasStrengthSpacing(old,previousStep,previousId,id,e.at)){
+          strengthCount=Math.min(REQUIRED_STRENGTHENING,strengthCount+1);
+          strengthAt=e.at;strengthStep=step;
+          minRecallAt=e.at+smallQueueDelay(strengthCount);
+        }else if(old.pendingRelearn){
+          // A genuine positive historical recall supersedes the obsolete missing relearn step.
+          strengthCount=1;strengthAt=e.at;strengthStep=step;minRecallAt=e.at+smallQueueDelay(1);
+        }
+        if(strengthCount<REQUIRED_STRENGTHENING){
+          phase=old.phase==='relearning'?'relearning':'learning';
+          due=e.at;eligibleStep=Math.max(step+1,strengthStep+strengtheningGap(strengthCount,e.rating));
+        }else{phase='review';due=e.at+DAY;minRecallAt=0;}
+      }else{strengthCount=REQUIRED_STRENGTHENING;minRecallAt=0;}
+      const defer=failureStreak>=failureLimit(plan,e.at)&&phase!=='review';
+      cards[id]={...next,phase,strengthCount,strengthAt,strengthStep,minRecallAt,pendingRelearn:e.rating===1&&!e.relearned?e.id:null,relearnedAt:e.rating===1&&e.relearned?e.at:null,attemptDay,attempts,failureStreak,deferredDay:defer?attemptDay:null,eligibleStep,due:defer?Math.max(due,nextDay(e.at)):due};
       const row=activity[attemptDay]??={new:0,attempts:0,success:0,crossDay:0,crossSuccess:0};
       row.attempts++;if(e.rating>=3)row.success++;
       (byQuestion[id]??=[]).push({day:attemptDay,kind:'rate',at:e.at,rating:e.rating,crossDay:old.phase==='review'&&localDay(old.lastReview)!==attemptDay});
@@ -133,11 +164,12 @@ export function questionMemoryStage(card,now){
   return {index:2,label:MEMORY_STAGES[2],detail:level==='weak'?'记忆已减弱，需及时复习':'已进入跨天间隔复习'};
 }
 const firstRecall=c=>c?.phase==='learning'&&!c.lastReview&&!c.stability;
-const canRetryToday=(c,now)=>c.attemptDay!==localDay(now)||c.attempts<4;
+export const canRetryToday=(c,now)=>c?.deferredDay!==localDay(now);
 export function nextShortTime(ids,state,now){
   const times=ids.map(id=>state.cards[id]).filter(c=>c&&c.phase!=='review').flatMap(c=>{
     if(!canRetryToday(c,now))return [Math.max(c.due,nextDay(now))];
     if(firstRecall(c)||c.due>now)return [c.due];
+    if(c.minRecallAt>now&&!hasStrengthSpacing(c,state.step,state.lastId,ids.find(id=>state.cards[id]===c),now))return [c.minRecallAt];
     // Rated short steps are task-based, not waiting for a wall-clock deadline.
     return [];
   });
@@ -148,7 +180,7 @@ export function chooseEarlyRecall({ids,state,now}){
   if(!state.plan)return null;
   const eligible=ids.filter(id=>{
     const c=state.cards[id];
-    return c&&c.phase!=='review'&&canRetryToday(c,now)&&localDay(c.due)<=localDay(now);
+    return c&&c.phase!=='review'&&canRetryToday(c,now)&&localDay(c.due)<=localDay(now)&&(c.pendingRelearn||hasStrengthSpacing(c,state.step,state.lastId,id,now));
   }).sort((a,b)=>Number(a===state.lastId)-Number(b===state.lastId)||state.cards[a].due-state.cards[b].due);
   return eligible.length?{id:eligible[0],kind:state.cards[eligible[0]].pendingRelearn?'relearn':'recall'}:null;
 }
@@ -166,7 +198,7 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
     // Two normal intervening tasks (one for hard cards) ensure fast learners
     // never have to finish the whole new-card quota before testing recall.
     if(firstRecall(c))return c.eligibleStep<=step||c.due<=now;
-    return c.due<=now&&(c.eligibleStep<=step||localDay(c.relearnedAt||c.lastReview||c.firstSeen)!==localDay(now));
+    return c.due<=now&&hasStrengthSpacing(c,step,lastId,id,now)&&(c.eligibleStep<=step||localDay(c.relearnedAt||c.lastReview||c.firstSeen)!==localDay(now));
   });
   short.sort((a,b)=>cards[a].due-cards[b].due);
   const due=candidates.filter(id=>isReviewDue(cards[id],plan,now)).sort((a,b)=>recallProbability(cards[a],now)-recallProbability(cards[b],now));
@@ -188,12 +220,14 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   // the very same rated card; explicit early recall remains available.
   const fallback=candidates.filter(id=>{
     const c=cards[id];
-    return c&&!c.pendingRelearn&&c.phase!=='review'&&!firstRecall(c)&&c.due<=now&&canRetryToday(c,now);
+    return c&&!c.pendingRelearn&&c.phase!=='review'&&!firstRecall(c)&&c.due<=now&&canRetryToday(c,now)&&hasStrengthSpacing(c,step,lastId,id,now);
   }).sort((a,b)=>cards[a].eligibleStep-cards[b].eligibleStep||cards[a].due-cards[b].due);
   if(fallback.length)return {id:fallback[0],kind:'recall'};
   // Single first exposure can still return after its short time delay.
   const introFallback=ids.find(id=>firstRecall(cards[id])&&cards[id].due<=now&&canRetryToday(cards[id],now));
-  return introFallback?{id:introFallback,kind:'recall'}:null;
+  if(introFallback)return {id:introFallback,kind:'recall'};
+  const delayed=ids.find(id=>{const c=cards[id];return c&&c.phase!=='review'&&!c.pendingRelearn&&c.strengthCount>0&&c.minRecallAt>0&&c.minRecallAt<=now&&c.due<=now&&canRetryToday(c,now);});
+  return delayed?{id:delayed,kind:'recall'}:null;
 }
 
 export function scopedActivity(ids,byQuestion){

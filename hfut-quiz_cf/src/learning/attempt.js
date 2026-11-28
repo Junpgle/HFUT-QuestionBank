@@ -1,6 +1,6 @@
 // Memory rating is not objective correctness. Only completed recall attempts count.
 export function learningAttempt(q,task,answer,rating,event){
-  if(!q||task?.kind==='intro'||!event||!answer?.result)return null;
+  if(!q||['intro','relearn'].includes(task?.kind)||!event||!answer?.result)return null;
   const subjective=q.type==='big'||answer.result==='self';
   const assisted=answer.result==='hint'||answer.usedHint===true;
   const objective=!subjective&&!assisted&&['correct','wrong','forgot'].includes(answer.result);

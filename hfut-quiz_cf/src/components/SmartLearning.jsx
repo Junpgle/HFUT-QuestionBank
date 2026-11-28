@@ -22,6 +22,7 @@ import {Markdown} from './Markdown';
 import {QuizQuestionPanel} from './QuizQuestionPanel';
 import {makeBackup,parseBackup,LIMIT} from '../learning/backup';
 import {readDraft,writeDraft,validDraft,cardVersion} from '../learning/session';
+import {learningAttempt} from '../learning/attempt';
 import {gradeFill,parseFillAnswer} from '../utils/fillAnswer';
 import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY} from '../learning/scheduler';
 import {loadLearning,appendLearning,exchangeLearning,makeLearningEvent,unionEvents,scheduleLearningSync,subscribeLearning,importLearning} from '../learning/store';
@@ -34,7 +35,7 @@ const fieldClass='mt-1.5 block min-h-[42px] w-full rounded-xl border border-slat
 const event=makeLearningEvent;
 const correctIndices=q=>Array.isArray(q.rawAnswer)?q.rawAnswer.map(Number):typeof q.rawAnswer==='string'?(q.rawAnswer.match(/[A-H]/gi)||[]).map(x=>x.toUpperCase().charCodeAt(0)-65):[Number(q.rawAnswer)];
 
-export default function SmartLearning({subject,subjectName,bank,user,wrongIds,brushedIds,onBack}){
+export default function SmartLearning({subject,subjectName,bank,user,wrongIds,brushedIds,onBack,onAttempt}){
   const [data,setData]=useState(null),[now,setNow]=useState(Date.now()),[exam,setExam]=useState(''),[reserve,setReserve]=useState(3),[scope,setScope]=useState('all'),[target,setTarget]=useState(.9);
   const [editingPlan,setEditingPlan]=useState(false),[showReport,setShowReport]=useState(false),[showBackup,setShowBackup]=useState(false);
   const [active,setActive]=useState(false),[extra,setExtra]=useState(false),[task,setTask]=useState(null),[error,setError]=useState(''),[syncing,setSyncing]=useState(false),[busy,setBusy]=useState(false),[syncMessage,setSyncMessage]=useState('');
@@ -58,10 +59,10 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
     return ()=>{cancelled=true;alive.current=false;clearInterval(timer);unsubscribe();};
   },[subject,user]);
 
-  async function commit(e){
+  async function commit(e,attempt=null){
     if(lock.current||!data)return false;
     lock.current=true;setBusy(true);setError('');
-    try{const next=await appendLearning(user,subject,e,e.kind==='plan'?null:draftRef.current||draft);if(alive.current){setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));setNow(Date.now());setTask(null);}if(user&&!subject.startsWith('custom_'))scheduleLearningSync(user,subject).catch(()=>{});if(e.kind==='plan')formDirty.current=false;else {draftRef.current=null;setDraft(null);writeDraft(user,subject,null);}return true;}
+    try{const next=await appendLearning(user,subject,e,e.kind==='plan'?null:draftRef.current||draft);if(attempt&&onAttempt){try{await onAttempt(attempt);}catch(err){console.error('共享答题统计保存失败',err);if(alive.current)setError('记忆记录已保存，但共享答题统计保存失败，请检查本地存储。');}}if(alive.current){setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));setNow(Date.now());setTask(null);}if(user&&!subject.startsWith('custom_'))scheduleLearningSync(user,subject).catch(()=>{});if(e.kind==='plan')formDirty.current=false;else {draftRef.current=null;setDraft(null);writeDraft(user,subject,null);}return true;}
     catch(err){if(alive.current){if(err.code==='STALE_CARD'){setData(await loadLearning(user,subject));draftRef.current=null;setDraft(null);setTask(null);writeDraft(user,subject,null);setError(err.message);}else setError('本地保存失败，学习进度未提交，请重试。');}return false;}
     finally{lock.current=false;if(alive.current)setBusy(false);}
   }
@@ -147,7 +148,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         answer={draft?.answer||{}}
         onAnswer={saveAnswer}
         onExit={leave}
-        onDone={rating=>commit(task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating}))}
+        onDone={rating=>{const e=task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating});return commit(e,learningAttempt(q,task,(draftRef.current||draft)?.answer,rating,e));}}
       />
     );
   }
@@ -846,7 +847,7 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
             onOptionClick={i=>{if(show||busy)return;if(q.type==='multiple')patch({selected:selected.includes(i)?selected.filter(x=>x!==i):[...selected,i]});else submit([i]);}}
             onSubmit={()=>submit()}
             onFillInputChange={(i,v)=>{const next=[...inputs];next[i]=v;patch({inputs:next});}}
-            onFillSubmit={({usedHint}={})=>{if(show||busy)return;patch({result:gradeFill(inputs,parseFillAnswer(q.options?.[0],q.question)).isCorrect?(usedHint?'hint':'correct'):'wrong'});}}
+            onFillSubmit={({usedHint}={})=>{if(show||busy)return;patch({usedHint:!!usedHint,result:gradeFill(inputs,parseFillAnswer(q.options?.[0],q.question)).isCorrect?(usedHint?'hint':'correct'):'wrong'});}}
           />
         )}
 

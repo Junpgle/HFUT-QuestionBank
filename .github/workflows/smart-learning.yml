@@ -22,9 +22,9 @@ jobs:
           cache-dependency-path: hfut-quiz_cf/package-lock.json
       - name: Verify scheduler and existing question parsers
         working-directory: hfut-quiz_cf
-        run: node --test src/learning/scheduler.test.js src/learning/backup.test.js src/learning/sync.test.js src/utils/progressSync.test.js src/utils/culturalRelics.test.js
+        run: node --test src/learning/scheduler.test.js src/learning/backup.test.js src/learning/sync.test.js src/learning/attempt.test.js src/utils/progressSync.test.js src/utils/culturalRelics.test.js
       - name: Verify learning database migration and sync
-        run: node --test hfut-backend/src/learning-sync.test.mjs hfut-backend/src/progress-merge.test.mjs
+        run: node --test hfut-backend/src/learning-sync.test.mjs hfut-backend/src/progress-merge.test.mjs hfut-backend/src/attempt-stats.test.mjs
       - name: Install frontend dependencies
         working-directory: hfut-quiz_cf
         run: npm ci

@@ -378,6 +378,21 @@ function App() {
     const selectorResolveRef = useRef(null);
     // 批量发送题目状态策略（随 sync-all 合并发送，攒够 40 题或切后台/定时同步时统一提交）
     const statsBuffer = useRef([]);
+    const statsOwnerRef=useRef(null);
+    const statsWriteRef=useRef(Promise.resolve());
+    const statsKey=uid=>'app_attempt_outbox_v1:'+uid;
+    const writeStats=(uid,add=[],ack=[])=>{
+        const run=async()=>{
+            const old=await localforage.getItem(statsKey(uid))||[];
+            const removed=new Set(ack);
+            const merged=[...new Map([...old,...add].filter(x=>x?.attemptId&&!removed.has(x.attemptId)).map(x=>[x.attemptId,x])).values()];
+            await localforage.setItem(statsKey(uid),merged);
+            return merged;
+        };
+        const p=statsWriteRef.current.catch(()=>{}).then(()=>navigator.locks?navigator.locks.request('qbank-attempt-outbox:'+uid,run):run());
+        statsWriteRef.current=p;
+        return p;
+    };
     const BATCH_THRESHOLD = 40;
     const VERSION_CHECK_INTERVAL = 12 * 60 * 60 * 1000;
     const INITIAL_SYNC_COOLDOWN = 2 * 60 * 1000;
@@ -539,7 +554,10 @@ function App() {
             journalRef.current=j;progressDirtyRef.current=!!pending.length;applyView(j.view);
         }
         const ops=includeProgress?j.pending.slice(0,keepalive?100:1500):[];
-        const stats=includeStats?statsBuffer.current.slice(0,100):[];
+        if(includeStats){
+            try{const saved=await writeStats(uid);if(String(api.getCurrentUser()?.id)!==String(uid))return null;statsBuffer.current=[...new Map([...saved,...statsBuffer.current.filter(x=>statsOwnerRef.current===String(uid))].map(x=>[x.attemptId,x])).values()];statsOwnerRef.current=String(uid);}catch(err){console.warn('读取待同步答题统计失败',err);}
+        }
+        const stats=includeStats?statsBuffer.current.slice(0,50):[];
         if(!ops.length&&!stats.length&&!pullProgress&&!checkVersion&&!heartbeat)return null;
         // Never acknowledge pending progress or stats until the server confirms.
         const payload={heartbeat,pullProgress:pullProgress||!!ops.length,checkVersion,stats:stats.length?stats:null,progressOps:ops.length||pullProgress?ops:null};
@@ -549,7 +567,13 @@ function App() {
             const res=await api.syncAll(payload,keepalive?{keepalive:true}:{});
             if(!res?.success)throw Error('服务器未确认同步');
             if(String(api.getCurrentUser()?.id)!==String(uid)||String(journalRef.current?.userId)!==String(uid))return null;
-            if(stats.length)statsBuffer.current=statsBuffer.current.filter(s=>!stats.includes(s));
+            if(stats.length){
+                if(!Array.isArray(res.statsAck)||stats.some(s=>!res.statsAck.includes(s.attemptId)))throw Error('答题统计未获确认，请先更新后端');
+                const ids=new Set(res.statsAck);
+                await writeStats(uid,[],res.statsAck);
+                if(String(api.getCurrentUser()?.id)!==String(uid))return null;
+                statsBuffer.current=statsBuffer.current.filter(s=>!ids.has(s.attemptId));
+            }
             if(payload.progressOps!==null&&(res.progressProtocol!==2||!res.progress||!Array.isArray(res.ack)||ops.some(o=>!res.ack.includes(o.id))))throw Error('普通题库同步协议未更新，请先部署新版后端');
             if(res.onlineCount!==undefined)setOnlineCount(res.onlineCount);
             if(heartbeat)lastHeartbeatAtRef.current=Date.now();
@@ -606,6 +630,8 @@ function App() {
         const uid=currentUser.id;
         let cancelled=false;
         setJournalReady(false);
+        if(statsOwnerRef.current!==String(uid)){statsOwnerRef.current=String(uid);statsBuffer.current=[];}
+        writeStats(uid).then(saved=>{if(!cancelled&&statsOwnerRef.current===String(uid)){statsBuffer.current=[...new Map([...saved,...statsBuffer.current].map(x=>[x.attemptId,x])).values()];scheduleProgressSync();}}).catch(err=>console.warn('答题统计恢复失败',err));
         const initialLocal=currentView();
         (async()=>{
             let saved=await localforage.getItem(journalKey(uid));
@@ -1989,21 +2015,27 @@ function App() {
         setShowSearchResults(true);
     };
     // ✅ 提交问题结果 (推入缓冲池，攒够 40 题随 sync-all 合并上报)
-    const submitQuestionResult = async (questionId, isCorrect, questionTitle, category, userAnswer = '') => {
-        if (questionId && questionId.startsWith('custom_')) return; // 自定义离线题库不提交结果
-        if (!currentUser) return;
-        statsBuffer.current.push({
-            questionId,
-            isCorrect,
-            questionTitle,
-            category,
-            userAnswer
-        });
+    const submitQuestionResult = async (questionId,isCorrect,questionTitle,category,userAnswer='',attemptId=crypto.randomUUID())=>{
+        if(!questionId||questionId.startsWith('custom_')||!currentUser)return;
+        const uid=currentUser.id;
+        if(String(api.getCurrentUser()?.id)!==String(uid))return;
+        if(statsOwnerRef.current!==String(uid)){statsOwnerRef.current=String(uid);statsBuffer.current=[];}
+        if(statsBuffer.current.some(s=>s.attemptId===attemptId))return;
+        const attempt={attemptId,questionId,isCorrect:!!isCorrect,questionTitle,category,userAnswer};
+        statsBuffer.current.push(attempt);
+        try{await writeStats(uid,[attempt]);}catch(err){console.error('答题统计本地保存失败',err);setSyncMsg('答题统计待保存');}
         scheduleProgressSync();
-        if (statsBuffer.current.length >= BATCH_THRESHOLD) {
-            // Let React commit this answer before capturing the pending progress.
-            setTimeout(()=>performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:true}),0);
-        }
+        if(statsBuffer.current.length>=BATCH_THRESHOLD)setTimeout(()=>performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:true}),0);
+    };
+    const handleLearningAttempt=async attempt=>{
+        if(!attempt)return;
+        applyResultStats(attempt.questionId,attempt.personalCorrect,{countMastered:attempt.countMastered,source:'smart-learning'});
+        setHistory(prev=>prev.some(h=>h.id===attempt.attemptId)?prev:[{
+            id:attempt.attemptId,questionId:attempt.questionId,questionTitle:attempt.questionTitle,
+            action:'answer',source:'smart-learning',isCorrect:attempt.personalCorrect,
+            objectiveCorrect:attempt.objective?attempt.isCorrect:undefined,userAnswer:attempt.userAnswer,timestamp:attempt.timestamp
+        },...prev]);
+        if(attempt.objective)await submitQuestionResult(attempt.questionId,attempt.isCorrect,attempt.questionTitle,attempt.category,attempt.userAnswer,attempt.attemptId);
     };
     const getQuestionDetails = (questionId) => {
         for (const lectureId in allQuestionBank) {
@@ -2632,9 +2664,9 @@ function App() {
         }
         return [];
     };
-    const applyResultStats = (questionId, isCorrect, {countMastered = true} = {}) => {
+    const applyResultStats = (questionId, isCorrect, {countMastered = true,source='practice'} = {}) => {
         // Only enrolled smart-learning cards receive new practice evidence; old records remain intact.
-        if (selectedSubject) recordPractice(currentUser, selectedSubject, questionId, isCorrect, !countMastered)
+        if (selectedSubject&&source!=='smart-learning') recordPractice(currentUser, selectedSubject, questionId, isCorrect, !countMastered)
             .catch(err => console.warn('智能学习记录写入失败，原刷题记录不受影响', err));
         setBrushedIds(prev => new Set(prev).add(questionId));
         if (isCorrect) {
@@ -3598,7 +3630,7 @@ function App() {
     return (
         <div className="h-full font-sans text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             {currentMode === 'dashboard' && renderDashboard()}
-            {currentMode === 'smart-learning' && selectedSubject && <SmartLearning key={String(currentUser?.id ?? 'guest') + ':' + selectedSubject} subject={selectedSubject} subjectName={currentSubject?.name || selectedSubject} bank={allQuestionBank} user={currentUser} wrongIds={wrongIds} brushedIds={brushedIds} onBack={() => setCurrentMode('dashboard')} />}
+            {currentMode === 'smart-learning' && selectedSubject && <SmartLearning key={String(currentUser?.id ?? 'guest') + ':' + selectedSubject} subject={selectedSubject} subjectName={currentSubject?.name || selectedSubject} bank={allQuestionBank} user={currentUser} wrongIds={wrongIds} brushedIds={brushedIds} onAttempt={handleLearningAttempt} onBack={() => setCurrentMode('dashboard')} />}
             {['quiz', 'memorize', 'mistakes', 'favorites'].includes(currentMode) && renderCard()}
             {currentMode === 'ranking' && renderRankingPage()}
             {viewingRankQuestion && renderQuestionDetailModal()}

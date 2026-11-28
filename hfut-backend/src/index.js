@@ -1,3 +1,4 @@
+import {prepareAttemptStats} from './attempt-stats.js';
 import {mergeUserProgress,validateOps} from './progress-merge.js';
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
@@ -244,7 +245,8 @@ app.post('/api/sync-all', async (c) => {
       mergedProgress=await mergeUserProgress(c.env.DB,user.id,{legacy:progress});
     }
 
-    const statsStatements = buildStatsStatements(c.env.DB, stats);
+    const attemptStats=prepareAttemptStats(c.env.DB,user.id,stats);
+    const statsStatements = [...attemptStats.statements,...buildStatsStatements(c.env.DB,attemptStats.legacy)];
     if (statsStatements.length > 0) {
       writeTasks.push(...statsStatements);
     }
@@ -273,7 +275,8 @@ app.post('/api/sync-all', async (c) => {
     const onlineRow = readResults[idx++]?.results?.[0];
     const responsePayload = {
       success: true,
-      onlineCount: onlineRow?.count || 0
+      onlineCount: onlineRow?.count || 0,
+      statsAck: attemptStats.ack
     };
 
     if (mergedProgress!==null) responsePayload.progress=mergedProgress;
@@ -340,11 +343,10 @@ app.get('/api/SystemConfig', async (c) => {
 app.post('/api/batchRecord', async (c) => {
   try {
     const { results } = await c.req.json();
-    const batch = buildStatsStatements(c.env.DB, results);
-    if (batch.length === 0) return c.json({ success: true });
-
-    await c.env.DB.batch(batch);
-    return c.json({ success: true });
+    const attemptStats=prepareAttemptStats(c.env.DB,c.get('user').id,results);
+    const batch=[...attemptStats.statements,...buildStatsStatements(c.env.DB,attemptStats.legacy)];
+    if(batch.length)await c.env.DB.batch(batch);
+    return c.json({success:true,statsAck:attemptStats.ack});
   } catch (e) {
     console.error('[BatchRecord Error]', e.message);
     return c.json({ error: e.message }, 500);
@@ -796,6 +798,11 @@ app.get('/api/getWrongQuestionRanking', async (c) => {
     params.push(limit);
 
     const { results } = await c.env.DB.prepare(querySql).bind(...params).all();
+    const counts=new Map();
+    if(results.length){
+      const ids=results.map(x=>x.question_id);
+      try{for(let i=0;i<ids.length;i+=90){const chunk=ids.slice(i,i+90);const res=await c.env.DB.prepare('SELECT question_id,COUNT(DISTINCT user_id) AS wrong_users FROM QuestionAttemptReceipts WHERE is_correct=0 AND question_id IN ('+chunk.map(()=>'?').join(',')+') GROUP BY question_id').bind(...chunk).all();for(const row of res.results||[])counts.set(row.question_id,row.wrong_users);}}catch(e){console.warn('新版出错人数尚不可用',e);}
+    }
     c.header('Cache-Control', 'public, max-age=300');
     return c.json({
       success: true,
@@ -805,6 +812,7 @@ app.get('/api/getWrongQuestionRanking', async (c) => {
         questionTitle: item.question_title,
         category: item.category,
         errorCount: item.error_count,
+        trackedWrongUsers: counts.get(item.question_id)??0,
         totalAttempts: item.total_attempts,
         errorRate: item.total_attempts > 0 ? Math.round((item.error_count / item.total_attempts) * 100) : 0,
         optionStats: item.option_stats ? JSON.parse(item.option_stats) : {}

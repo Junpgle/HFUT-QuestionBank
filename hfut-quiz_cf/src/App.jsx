@@ -36,6 +36,7 @@ import {QuizMobileTopBar} from './components/QuizMobileTopBar';
 import {QuizNavControls} from './components/QuizNavControls';
 import {QuizQuestionPanel} from './components/QuizQuestionPanel';
 import SmartLearning from './components/SmartLearning';
+import {recordPractice} from './learning/store';
 import {QuizDiscussionPanel} from './components/QuizDiscussionPanel';
 import {AutoMasterNoticeToast} from './components/AutoMasterNoticeToast';
 import {
@@ -2782,6 +2783,9 @@ function App() {
         return [];
     };
     const applyResultStats = (questionId, isCorrect, {countMastered = true} = {}) => {
+        // Only enrolled smart-learning cards receive new practice evidence; old records remain intact.
+        if (selectedSubject) recordPractice(currentUser, selectedSubject, questionId, isCorrect, !countMastered)
+            .catch(err => console.warn('智能学习记录写入失败，原刷题记录不受影响', err));
         setBrushedIds(prev => new Set(prev).add(questionId));
         if (isCorrect) {
             setWrongIds(prev => {

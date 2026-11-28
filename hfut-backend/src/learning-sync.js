@@ -1,6 +1,6 @@
 const validSubject=s=>typeof s==='string'&&['innovation','maogai','hgdmy-maogai','english-culture','cultural-relics'].includes(s);
 const prefixes={innovation:/^(OLD-|L\d+-)/,maogai:/^MG-/, 'hgdmy-maogai':/^HGD-MG-/, 'english-culture':/^ENG-CUL-/, 'cultural-relics':/^RELICS-/};
-const day=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s));
+const day=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s;
 function clean(e,subject){
   if(!e||typeof e.id!=='string'||!/^[a-f0-9-]{36}$/i.test(e.id)||!Number.isSafeInteger(e.at)||e.at<1577836800000||e.at>Date.now()+86400000||!day(e.day))throw Error('无效学习事件');
   const base={id:e.id,kind:e.kind,at:e.at,day:e.day};
@@ -11,7 +11,7 @@ function clean(e,subject){
   }
   if(typeof e.questionId!=='string'||e.questionId.length>100||!prefixes[subject].test(e.questionId))throw Error('无效题目 ID');
   if(e.kind==='intro')return {...base,questionId:e.questionId};
-  if(e.kind==='rate'&&[1,2,3,4].includes(e.rating))return {...base,questionId:e.questionId,rating:e.rating};
+  if(e.kind==='rate'&&[1,2,3,4].includes(e.rating))return {...base,questionId:e.questionId,rating:e.rating,...(e.source==='practice'?{source:'practice'}:{})};
   throw Error('无效事件类型');
 }
 export function registerLearningRoutes(app){

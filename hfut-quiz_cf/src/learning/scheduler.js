@@ -72,7 +72,8 @@ export function replayEvents(events) {
       const attempts=old.attemptDay===attemptDay?(old.attempts||0)+1:1;
       const next=rateCard(old,e.rating,e.at);
       const nextDay=attempts>=4 && next.phase!=='review';
-      cards[id]={...next,attemptDay,attempts,eligibleStep:step+3,due:nextDay?Math.max(next.due,e.at+DAY):next.due};
+      const tomorrow=new Date(e.at);tomorrow.setHours(24,0,0,0);
+      cards[id]={...next,attemptDay,attempts,eligibleStep:step+3,due:nextDay?Math.max(next.due,tomorrow.getTime()):next.due};
       if(old.phase==='review'){
         (todayCounts[e.day]??=new Set()).add(id);
       }
@@ -94,8 +95,8 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
     const c=cards[id]; if(c?.phase!=='review')return false;
     return localDay(c.due)<=localDay(now) || (p.days<=plan.reserve&&p.days>0&&localDay(c.lastReview)!==localDay(now)&&recallProbability(c,examTime)<.9);
   }).sort((a,b)=>recallProbability(cards[a],now)-recallProbability(cards[b],now));
-  const priority=new Set(priorityIds);
-  const fresh=p.unseen.sort((a,b)=>Number(priority.has(b))-Number(priority.has(a)))[0];
+  const priority=new Map(priorityIds.map((id,i)=>[id,i]));
+  const fresh=p.unseen.sort((a,b)=>(priority.get(a)??Infinity)-(priority.get(b)??Infinity))[0];
   const allowNew=fresh&&(extra||p.remainingNew>0);
   if(short.length)return {id:short[0],kind:'recall'};
   // Alternate review and introduction while both are available.

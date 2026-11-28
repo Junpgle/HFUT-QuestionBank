@@ -20,7 +20,7 @@ export async function exchangeLearning(user,subject,data) {
   // Server deduplicates retries by event ID; send unsynced events in bounded batches.
   const pending=events.filter(e=>!e.synced);
   for(let i=0;i<pending.length;i+=50){
-    const res=await api.request('/learning/events','POST',{subject,events:pending.slice(i,i+50).map(({synced: _synced,...e})=>e)});
+    const res=await api.request('/learning/events','POST',{subject,events:pending.slice(i,i+50).map(e=>{const copy={...e};delete copy.synced;return copy;})});
     if(!res?.success)throw new Error('学习记录上传未确认');
   }
   for(let page=0;page<100;page++){

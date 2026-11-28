@@ -41,10 +41,11 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   async function sync(reason='manual'){
     if(syncLock.current||!data||!user)return;
     syncLock.current=true;setSyncing(true);setSyncMessage('');
-    try{const next=await exchangeLearning(user,subject,reason);if(alive.current){setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));const p=replayEvents(next.events).plan;if(p&&!formDirty.current){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}if(reason==='manual')setSyncMessage(next.syncError||'云端学习记录已合并');}}
-    catch{if(alive.current)setSyncMessage('云同步暂不可用，本地记录仍保留。');}
+    try{const next=await exchangeLearning(user,subject,reason);if(alive.current){setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));const p=replayEvents(next.events).plan;if(p&&!formDirty.current){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}if(reason==='manual')setSyncMessage(next.syncError||(!next.lastSyncAt?'暂未完成云同步，请稍后重试':'云端学习记录已合并'));}}
+    catch{if(alive.current)setSyncMessage(navigator.onLine===false?'当前网络离线，本地记录仍保留。':'云同步暂不可用，本地记录仍保留。');}
     finally{syncLock.current=false;if(alive.current)setSyncing(false);}
   }
+  useEffect(()=>{if(data?.lastSyncAt&&!data.syncError)setSyncMessage('');},[data?.lastSyncAt]);
   // Entry refresh is throttled across reloads by the persisted successful sync time.
   const pulled=useRef(false);
   useEffect(()=>{if(data&&user&&!subject.startsWith('custom_')&&!pulled.current){pulled.current=true;sync('enter');}},[data,user,subject]);
@@ -85,7 +86,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
     <header className="flex flex-wrap items-center gap-3 sticky top-0 z-10 py-2 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur"><button disabled={locked} className={btn} onClick={leave} aria-label="返回"><ArrowLeft size={18}/></button><div className="flex-1"><h1 className="text-2xl font-bold flex items-center gap-2"><Brain/> 智能学习</h1><p className="text-sm text-slate-500">{subjectName}</p></div>{user&&!subject.startsWith('custom_')&&<button disabled={locked||syncing||!data} onClick={()=>sync('manual')} className={btn}><RefreshCw className="inline mr-1" size={16}/>{syncing?'同步中':'同步'}</button>}</header>
     {draftWarning&&<p className="text-amber-600 text-sm">当前浏览器无法保存未提交的答题草稿，已提交学习记录不受影响。</p>}
     {error&&<p role="alert" className="text-red-600">{error}</p>}
-    {user&&!subject.startsWith('custom_')&&data&&<p role="status" className="text-xs text-slate-500">{data.events.filter(e=>!e.synced).length} 条待同步 · {data.lastSyncAt?'上次同步 '+new Date(data.lastSyncAt).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}):'尚未完成云同步'}{data.syncError?' · 自动退避重试':''}</p>}
+    {user&&!subject.startsWith('custom_')&&data&&<p role="status" className="text-xs text-slate-500">{data.events.filter(e=>!e.synced).length} 条待同步 · {data.lastSyncAt?'上次同步 '+new Date(data.lastSyncAt).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}):'尚未完成云同步'}{data.syncError?(data.events.some(e=>!e.synced)||data.hasMore?' · 自动退避重试':' · 拉取失败，可手动重试'):''}</p>}
     {syncMessage&&<p role="status" className="text-sm text-slate-500">{syncMessage}</p>}
     {!data?<p>正在读取学习记录…</p>:<>
       {plan&&<section className={active?'rounded-xl border border-slate-200 dark:border-slate-800 px-3 py-2 bg-white dark:bg-slate-900':surface}><div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

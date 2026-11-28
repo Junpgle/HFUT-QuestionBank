@@ -73,7 +73,8 @@ async function performExchange(user,subject,reason){
   const k=key(user,subject);
   checkAccount(user);
   const snapshot=await loadLearning(user,subject);
-  if(!online()||!shouldSync(snapshot,reason,Date.now()))return snapshot;
+  if(!online()){if(reason==='manual')throw Error('当前网络离线，本地学习记录仍保留');return snapshot;}
+  if(!shouldSync(snapshot,reason,Date.now()))return snapshot;
   clearTimer(k);
   let result=snapshot;
   const request=async(...args)=>{checkAccount(user);const r=await api.request(...args);checkAccount(user);return r;};

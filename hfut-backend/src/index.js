@@ -4,6 +4,7 @@ import { sign, verify } from 'hono/jwt'
 import bcrypt from 'bcryptjs'
 import { createHash } from 'node:crypto'
 import { Resend } from 'resend'
+import { registerLearningRoutes } from './learning-sync.js'
 import { registerSiteSyncRoutes } from './site-sync.js'
 import { registerPasswordResetRoutes } from './password-reset.js'
 
@@ -912,7 +913,8 @@ app.post('/api/secureSync', async (c) => {
 app.post('/api/recoverOutageStats', async (c) => c.json({ success: true }));
 
 // Extension API uses the same /api/* JWT authentication as Question-Bank.
-registerSiteSyncRoutes(app);
+registerSiteSyncRoutes(app)
+registerLearningRoutes(app);
 registerPasswordResetRoutes(app);
 
 export default app

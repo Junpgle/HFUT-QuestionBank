@@ -35,6 +35,7 @@ import {QuizSidebar} from './components/QuizSidebar';
 import {QuizMobileTopBar} from './components/QuizMobileTopBar';
 import {QuizNavControls} from './components/QuizNavControls';
 import {QuizQuestionPanel} from './components/QuizQuestionPanel';
+import SmartLearning from './components/SmartLearning';
 import {QuizDiscussionPanel} from './components/QuizDiscussionPanel';
 import {AutoMasterNoticeToast} from './components/AutoMasterNoticeToast';
 import {
@@ -3246,6 +3247,7 @@ function App() {
                                         </div>
                                     </div>
                                 </div>
+                                <button type="button" disabled={bankStatus !== 'ready'} onClick={() => setCurrentMode('smart-learning')} className="w-full rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white p-4 font-bold disabled:opacity-50 flex justify-center items-center gap-2"><Brain size={20}/> 智能学习 · 考试计划</button>
                                 <div className="grid grid-cols-2 gap-4 pt-2">
                                     <button onClick={() => generateAndStartQuiz('quiz')}
                                             disabled={bankStatus !== 'ready'}
@@ -3750,6 +3752,7 @@ function App() {
     return (
         <div className="h-full font-sans text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             {currentMode === 'dashboard' && renderDashboard()}
+            {currentMode === 'smart-learning' && selectedSubject && <SmartLearning key={String(currentUser?.id ?? 'guest') + ':' + selectedSubject} subject={selectedSubject} subjectName={currentSubject?.name || selectedSubject} bank={allQuestionBank} user={currentUser} wrongIds={wrongIds} brushedIds={brushedIds} onBack={() => setCurrentMode('dashboard')} />}
             {['quiz', 'memorize', 'mistakes', 'favorites'].includes(currentMode) && renderCard()}
             {currentMode === 'ranking' && renderRankingPage()}
             {viewingRankQuestion && renderQuestionDetailModal()}

@@ -1,8 +1,9 @@
 import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { BookOpen, Brain, ChevronLeft, ChevronRight, DownloadCloud, FileDown, FileUp, Github, GraduationCap, Info, Loader2, Maximize, Minimize, Settings, Trash2, UploadCloud, User, Wand2 } from 'lucide-react';
+import { BookOpen, Brain, ChevronLeft, ChevronRight, DownloadCloud, FileDown, FileUp, Github, GraduationCap, Info, Loader2, Maximize, Minimize, Settings, Trash2, UploadCloud, User, Users, Eye, Wand2 } from 'lucide-react';
 import mottos from './data/mottos.json';
 import { formatDate } from './utils/date';
+import {siteMetricsDay} from './utils/siteMetrics';
 
 const CustomUploadModal = lazy(() => import('./CustomUploadModal.jsx'));
 const AIQuestionModal = lazy(() => import('./AIQuestionModal.jsx'));
@@ -35,6 +36,7 @@ export const SubjectSelector = ({
     isFullscreen,
     onToggleFullscreen,
     onlineCount,
+    siteMetrics,
 }) => {
     const isGuest = !currentUser;
     const runLocalTransition = (callback) => {
@@ -259,11 +261,18 @@ export const SubjectSelector = ({
                             </button>
                         </div>
                     )}
-                    {onlineCount !== null && (
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-100 rounded-full text-xs font-bold text-blue-700 mb-4 shadow-sm animate-fade-in dark:bg-blue-950/40 dark:border-blue-900/60 dark:text-blue-400">
-                            <User size={12} /> 在线：{onlineCount}
-                        </div>
-                    )}
+                    <div className="flex flex-wrap justify-center items-center gap-2 mb-4 animate-fade-in text-xs font-semibold tabular-nums">
+                        {[
+                            {icon:User,label:'在线',value:onlineCount,title:'最近3分钟有活动的登录账号'},
+                            {icon:Eye,label:'今日浏览量',value:siteMetrics?.day===siteMetricsDay()?siteMetrics.pageViews:null,title:'北京时间今日页面打开或刷新次数，含游客'},
+                            {icon:Users,label:'累计注册人数',value:siteMetrics?.registeredCount??null,title:'已完成邮箱验证的账号总数'},
+                        ].map(({icon:Icon,label,value,title})=>(
+                            <span key={label} title={title} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-slate-600 shadow-sm dark:bg-slate-900/80 dark:border-slate-800 dark:text-slate-300">
+                                <Icon size={13} aria-hidden="true" className="text-blue-500 dark:text-blue-400"/>
+                                <span>{label}：</span><strong className="text-slate-800 dark:text-slate-100">{value==null?'—':value.toLocaleString('zh-CN')}</strong>
+                            </span>
+                        ))}
+                    </div>
                     <div className="bg-gradient-to-tr from-blue-600 to-indigo-600 w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 rounded-2xl flex items-center justify-center mb-3 md:mb-6 shadow-lg shadow-blue-500/30 text-white transform rotate-3 hover:rotate-12 transition-transform duration-300 dark:shadow-indigo-900/20">
                         <BookOpen size={24} className="sm:w-8 sm:h-8 md:w-10 md:h-10"/>
                     </div>

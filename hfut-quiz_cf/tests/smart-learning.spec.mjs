@@ -106,3 +106,17 @@ test('quick introductions return to first recall before all new cards are shown'
   await expect(page.getByRole('heading',{name:'参考答案'})).toHaveCount(0);
   await expect(page.getByRole('progressbar',{name:'本题记忆阶段进度'})).toHaveAttribute('aria-valuenow','2');
 });
+
+test('memory stage is compact and not duplicated on mobile or desktop',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await open(page);await plan(page);
+  await button(page,'开始今日学习').click();
+  for(const viewport of [{width:390,height:844},{width:1280,height:800}]){
+    await page.setViewportSize(viewport);
+    const progress=page.getByRole('progressbar',{name:'本题记忆阶段进度'});
+    await expect(progress).toHaveCount(1);
+    const rect=await progress.evaluate(el=>el.parentElement.getBoundingClientRect().height);
+    expect(rect).toBeLessThanOrEqual(28);
+    await expect(page.getByText('当前阶段：学习新题',{exact:true})).toHaveCount(0);
+  }
+});

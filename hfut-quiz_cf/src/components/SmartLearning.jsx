@@ -2,7 +2,6 @@ import {useEffect,useMemo,useRef,useState} from 'react';
 import {
   AlertCircle,
   ArrowLeft,
-  BookOpen,
   Brain,
   CalendarDays,
   CheckCircle2,
@@ -10,7 +9,6 @@ import {
   ChevronRight,
   Clock,
   Download,
-  Flame,
   Layers,
   Play,
   PlusCircle,
@@ -594,12 +592,6 @@ function SmartLearningSession({
     return ()=>window.removeEventListener('keydown',onKey);
   },[busy,onExit,canPrev,canNext,onPrev,onNext]);
 
-  const taskMeta=task?.kind==='intro'
-    ?{label:'学习新题',desc:'首次学习，先理解记忆题目与答案',icon:<BookOpen size={14} aria-hidden="true"/>,tone:'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/70'}
-    :task?.kind==='review'
-      ?{label:'间隔复习',desc:'到期复习，检验长期记忆保持情况',icon:<RotateCcw size={14} aria-hidden="true"/>,tone:'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/70'}
-      :{label:'即时巩固',desc:'短时强化，巩固刚刚学过或薄弱题目',icon:<Flame size={14} aria-hidden="true"/>,tone:'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/70'};
-
   return (
     <div className="h-[100dvh] flex flex-col md:flex-row bg-slate-100 dark:bg-slate-900">
       {/* Desktop sidebar matching QuizSidebar */}
@@ -619,16 +611,6 @@ function SmartLearningSession({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {q&&(
-            <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5 dark:border-slate-800 dark:bg-slate-950/60 space-y-2">
-              <div className="text-xs font-semibold text-slate-400 dark:text-slate-500">当前阶段</div>
-              <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-bold ${taskMeta.tone}`}>
-                {taskMeta.icon}
-                <span>{taskMeta.label}</span>
-              </span>
-            </div>
-          )}
-
           {plan&&(
             <div className="space-y-2.5">
               <div className="px-1 text-xs font-semibold text-slate-400 dark:text-slate-500">今日进度</div>
@@ -666,7 +648,7 @@ function SmartLearningSession({
             <RotateCcw size={20} aria-hidden="true"/>
           </button>
           <span className="font-bold text-sm text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
-            {q?taskMeta.label:'智能学习'}
+            智能学习
           </span>
           <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
             待学 {due+pending}
@@ -674,8 +656,8 @@ function SmartLearningSession({
         </div>
 
         {/* Main quiz scroll area matching renderCard */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12 flex justify-center pb-28 md:pb-12 mobile-safe-bottom">
-          <div className="w-full max-w-5xl space-y-6 md:space-y-8">
+        <div className="flex-1 overflow-y-auto px-4 pt-2 pb-28 md:px-8 md:pt-4 md:pb-8 flex justify-center mobile-safe-bottom">
+          <div className="w-full max-w-5xl space-y-2 md:space-y-3">
             {draftWarning&&(
               <div role="status" className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
                 <AlertCircle size={15} className="shrink-0" aria-hidden="true"/>
@@ -694,7 +676,6 @@ function SmartLearningSession({
                 key={(isHistory?'hist:'+historyPos+':':'')+task.kind+':'+q.id}
                 q={q}
                 task={task}
-                taskMeta={taskMeta}
                 card={card}
                 now={now}
                 busy={busy}
@@ -733,34 +714,28 @@ function SmartLearningSession({
   );
 }
 
-function QuestionStageProgress({card,now,isHistory}){
+function QuestionStageProgress({card,now,isHistory,historyPos}){
   const stage=questionMemoryStage(card,now);
   const tone=stage.index===1?'bg-amber-500 dark:bg-amber-400':stage.index>=3?'bg-emerald-500 dark:bg-emerald-400':'bg-indigo-500 dark:bg-indigo-400';
   return (
-    <section aria-label="单题学习阶段" className="rounded-2xl border border-slate-200 bg-white px-3.5 py-3 sm:px-5 sm:py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <div className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-500 dark:text-slate-400">
-          <Brain size={15} aria-hidden="true" className="text-indigo-500"/>
-          {isHistory?'此题最新记忆阶段':'本题记忆阶段'}
-          <span className="text-slate-800 dark:text-slate-100 font-bold">{stage.label}</span>
-        </div>
-        <span className="text-xs font-semibold tabular-nums text-slate-400 dark:text-slate-500">阶段 {stage.index+1} / {MEMORY_STAGES.length}</span>
-      </div>
-      <div role="progressbar" aria-label="本题记忆阶段进度" aria-valuemin={1} aria-valuemax={MEMORY_STAGES.length} aria-valuenow={stage.index+1} aria-valuetext={stage.label} className="grid grid-cols-5 gap-1.5 sm:gap-2 mt-3">
+    <div className="flex items-center gap-2 sm:gap-3 min-w-0 px-1 text-xs leading-5" title={MEMORY_STAGES.join(' → ')+'；'+stage.detail}>
+      <span className="inline-flex items-center gap-1 shrink-0 font-semibold text-slate-700 dark:text-slate-200">
+        <Brain size={13} aria-hidden="true" className="text-indigo-500"/>
+        {stage.label}
+      </span>
+      <div role="progressbar" aria-label="本题记忆阶段进度" aria-valuemin={1} aria-valuemax={MEMORY_STAGES.length} aria-valuenow={stage.index+1} aria-valuetext={stage.label} className="grid grid-cols-5 gap-1 w-20 sm:w-28 shrink-0">
         {MEMORY_STAGES.map((label,i)=>(
-          <div key={label} className="min-w-0" aria-hidden="true">
-            <div className={'h-1.5 sm:h-2 rounded-full '+(i<=stage.index?tone:'bg-slate-100 dark:bg-slate-800')+(i===stage.index?' ring-2 ring-offset-2 ring-indigo-300 ring-offset-white dark:ring-indigo-700 dark:ring-offset-slate-900':'')}/>
-            <div className={'mt-2 text-center text-[10px] sm:text-xs leading-tight '+(i===stage.index?'font-bold text-slate-900 dark:text-slate-100':'text-slate-400 dark:text-slate-500')}>{label}</div>
-          </div>
+          <div key={label} title={label} aria-hidden="true" className={'h-1.5 rounded-full '+(i<=stage.index?tone:'bg-slate-200 dark:bg-slate-700')}/>
         ))}
       </div>
-      <p className="mt-2 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">{stage.detail}</p>
-    </section>
+      <span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">{stage.index+1}/{MEMORY_STAGES.length}</span>
+      {isHistory&&<span className="ml-auto truncate text-slate-500 dark:text-slate-400">回顾 {historyPos}</span>}
+    </div>
   );
 }
 
 function SmartLearningQuestion({
-  q,task,taskMeta,card,now,busy,answer,
+  q,task,card,now,busy,answer,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onDone,
 }){
@@ -918,21 +893,7 @@ function SmartLearningQuestion({
 
   return (
     <>
-      <QuestionStageProgress card={card} now={now} isHistory={isHistory}/>
-      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 text-xs font-bold ${taskMeta.tone}`}>
-            {taskMeta.icon}
-            <span>当前阶段：{taskMeta.label}</span>
-          </span>
-          {isHistory&&(
-            <span className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-              回顾第 {historyPos} 题
-            </span>
-          )}
-        </div>
-        <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">{taskMeta.desc}</span>
-      </div>
+      <QuestionStageProgress card={card} now={now} isHistory={isHistory} historyPos={historyPos}/>
 
       <div className="grid md:grid-cols-3 gap-4 md:gap-6 items-stretch">
         {big?(
@@ -976,14 +937,8 @@ function SmartLearningQuestion({
 
         <div className="hidden md:flex h-full flex-col justify-between bg-white dark:bg-slate-900 rounded-[1.5rem] md:rounded-[2rem] shadow-sm border border-slate-200 dark:border-slate-800 p-5 md:p-6 animate-enter gap-4">
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
-            <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-bold ${taskMeta.tone}`}>
-              {taskMeta.icon}
-              <span>{taskMeta.label}</span>
-            </span>
-            <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
-              {isHistory?`回顾 ${historyPos}`:intro?'新题记忆':!show?'独立回忆':'记忆评分'}
-            </span>
-          </div>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{isHistory?'历史答题':intro?'记忆确认':!show?'独立回忆':'记忆评分'}</span>
+           </div>
 
           <div className="my-auto">
             {desktopControls}

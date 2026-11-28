@@ -792,24 +792,24 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
     <div className="flex flex-col gap-2.5 w-full">
       <button type="button" disabled={busy} onClick={()=>onDone()} className="w-full min-h-[44px] px-4 py-3.5 rounded-2xl text-sm font-bold text-white bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 shadow-md transition-all disabled:opacity-50 inline-flex items-center justify-between">
         <span>已记忆，继续</span>
-        <kbd className={kbdClass+' border-white/30 bg-white/15 text-white'}>Space</kbd>
+        <kbd aria-hidden="true" className={kbdClass+' border-white/30 bg-white/15 text-white'}>Space</kbd>
       </button>
       <button type="button" disabled={busy} onClick={()=>onDone(1)} className="w-full min-h-[44px] px-4 py-3 rounded-2xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-all disabled:opacity-50 inline-flex items-center justify-between">
         <span>比较难记</span>
-        <kbd className={kbdClass+' border-slate-300 bg-slate-100 text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300'}>1</kbd>
+        <kbd aria-hidden="true" className={kbdClass+' border-slate-300 bg-slate-100 text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300'}>1</kbd>
       </button>
     </div>
   ):!show?(
     <button type="button" disabled={busy} onClick={()=>patch({result:big?'self':'forgot'})} className="w-full min-h-[44px] px-4 py-3.5 rounded-2xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 shadow-sm transition-all disabled:opacity-50 inline-flex items-center justify-center gap-2">
       <span>{big?'展示参考答案':'忘记了，查看答案'}</span>
-      <kbd className={kbdClass+' border-slate-300 bg-slate-100 text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300'}>Space</kbd>
+      <kbd aria-hidden="true" className={kbdClass+' border-slate-300 bg-slate-100 text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300'}>Space</kbd>
     </button>
   ):(
     <div className="flex flex-col gap-2.5 w-full">
       {ratingButtons.map(([r,t,tone])=>(
         <button key={r} type="button" disabled={busy} onClick={()=>onDone(r)} className={`w-full min-h-[44px] px-4 py-3 rounded-2xl text-sm font-bold border transition-all disabled:opacity-50 inline-flex items-center justify-between ${tone}`}>
           <span>{t}</span>
-          <kbd className={`${kbdClass} ${r===4?'border-white/30 bg-white/15 text-white':'border-current/25 bg-white/60 dark:bg-black/20'}`}>{r}</kbd>
+          <kbd aria-hidden="true" className={`${kbdClass} ${r===4?'border-white/30 bg-white/15 text-white':'border-current/25 bg-white/60 dark:bg-black/20'}`}>{r}</kbd>
         </button>
       ))}
     </div>

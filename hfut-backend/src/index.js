@@ -1,9 +1,12 @@
+import {prepareAttemptStats} from './attempt-stats.js';
+import {mergeUserProgress,validateOps} from './progress-merge.js';
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { sign, verify } from 'hono/jwt'
 import bcrypt from 'bcryptjs'
 import { createHash } from 'node:crypto'
 import { Resend } from 'resend'
+import { registerLearningRoutes } from './learning-sync.js'
 import { registerSiteSyncRoutes } from './site-sync.js'
 import { registerPasswordResetRoutes } from './password-reset.js'
 
@@ -224,6 +227,7 @@ app.post('/api/sync-all', async (c) => {
     const user = c.get('user');
     const {
       progress = null,
+      progressOps = null,
       heartbeat = true,
       stats = null,
       pullProgress = false,
@@ -232,27 +236,17 @@ app.post('/api/sync-all', async (c) => {
     const now = new Date().toISOString();
     const writeTasks = [];
 
-    if (progress) {
-      writeTasks.push(c.env.DB.prepare(`
-        INSERT INTO UserProgress (user_id, brushed_ids, memorized_ids, mastered_ids, wrong_ids, favorite_ids, history, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET 
-          brushed_ids=excluded.brushed_ids, memorized_ids=excluded.memorized_ids, 
-          mastered_ids=excluded.mastered_ids, wrong_ids=excluded.wrong_ids, 
-          favorite_ids=excluded.favorite_ids, history=excluded.history, updated_at=excluded.updated_at
-      `).bind(
-        user.id,
-        JSON.stringify(progress.brushedIds || []),
-        JSON.stringify(progress.memorizedIds || []),
-        JSON.stringify(progress.masteredIds || []),
-        JSON.stringify(progress.wrongIds || []),
-        JSON.stringify(progress.favoriteIds || []),
-        JSON.stringify(progress.history || []),
-        now
-      ));
+    let mergedProgress=null,validatedOps=null;
+    if(progressOps!==null){
+      try{validatedOps=validateOps(progressOps);}catch(e){return c.json({error:e.message},400);}
+      mergedProgress=await mergeUserProgress(c.env.DB,user.id,{ops:validatedOps});
+    }else if(progress){
+      // Old clients do not provide explicit removals. Never overwrite the account with a stale snapshot.
+      mergedProgress=await mergeUserProgress(c.env.DB,user.id,{legacy:progress});
     }
 
-    const statsStatements = buildStatsStatements(c.env.DB, stats);
+    const attemptStats=prepareAttemptStats(c.env.DB,user.id,stats);
+    const statsStatements = [...attemptStats.statements,...buildStatsStatements(c.env.DB,attemptStats.legacy)];
     if (statsStatements.length > 0) {
       writeTasks.push(...statsStatements);
     }
@@ -269,7 +263,7 @@ app.post('/api/sync-all', async (c) => {
     const readTasks = [
       c.env.DB.prepare('SELECT count(*) as count FROM UserPresence WHERE last_seen > ?').bind(threshold)
     ];
-    if (pullProgress) {
+    if (pullProgress && mergedProgress===null) {
       readTasks.push(c.env.DB.prepare('SELECT * FROM UserProgress WHERE user_id = ?').bind(user.id));
     }
     if (checkVersion) {
@@ -281,10 +275,13 @@ app.post('/api/sync-all', async (c) => {
     const onlineRow = readResults[idx++]?.results?.[0];
     const responsePayload = {
       success: true,
-      onlineCount: onlineRow?.count || 0
+      onlineCount: onlineRow?.count || 0,
+      statsAck: attemptStats.ack
     };
 
-    if (pullProgress) {
+    if (mergedProgress!==null) responsePayload.progress=mergedProgress;
+    if (validatedOps!==null){responsePayload.progressProtocol=2;responsePayload.ack=validatedOps.map(o=>o.id);}
+    if (pullProgress && mergedProgress===null) {
       const progressRow = readResults[idx++]?.results?.[0];
       responsePayload.progress = formatProgressRow(progressRow);
     }
@@ -294,6 +291,7 @@ app.post('/api/sync-all', async (c) => {
       responsePayload.appVersion = versionRow ? { success: true, ...versionRow } : null;
     }
 
+    c.header('Cache-Control','no-store');
     return c.json(responsePayload);
   } catch (e) {
     return c.json({ error: e.message }, 500);
@@ -345,11 +343,10 @@ app.get('/api/SystemConfig', async (c) => {
 app.post('/api/batchRecord', async (c) => {
   try {
     const { results } = await c.req.json();
-    const batch = buildStatsStatements(c.env.DB, results);
-    if (batch.length === 0) return c.json({ success: true });
-
-    await c.env.DB.batch(batch);
-    return c.json({ success: true });
+    const attemptStats=prepareAttemptStats(c.env.DB,c.get('user').id,results);
+    const batch=[...attemptStats.statements,...buildStatsStatements(c.env.DB,attemptStats.legacy)];
+    if(batch.length)await c.env.DB.batch(batch);
+    return c.json({success:true,statsAck:attemptStats.ack});
   } catch (e) {
     console.error('[BatchRecord Error]', e.message);
     return c.json({ error: e.message }, 500);
@@ -801,6 +798,11 @@ app.get('/api/getWrongQuestionRanking', async (c) => {
     params.push(limit);
 
     const { results } = await c.env.DB.prepare(querySql).bind(...params).all();
+    const counts=new Map();let countsAvailable=true;
+    if(results.length){
+      const ids=results.map(x=>x.question_id);
+      try{for(let i=0;i<ids.length;i+=90){const chunk=ids.slice(i,i+90);const res=await c.env.DB.prepare('SELECT question_id,COUNT(DISTINCT user_id) AS wrong_users FROM QuestionAttemptReceipts WHERE is_correct=0 AND question_id IN ('+chunk.map(()=>'?').join(',')+') GROUP BY question_id').bind(...chunk).all();for(const row of res.results||[])counts.set(row.question_id,row.wrong_users);}}catch(e){countsAvailable=false;console.warn('新版出错人数尚不可用',e);}
+    }
     c.header('Cache-Control', 'public, max-age=300');
     return c.json({
       success: true,
@@ -810,6 +812,7 @@ app.get('/api/getWrongQuestionRanking', async (c) => {
         questionTitle: item.question_title,
         category: item.category,
         errorCount: item.error_count,
+        ...(countsAvailable?{trackedWrongUsers:counts.get(item.question_id)??0}:{}),
         totalAttempts: item.total_attempts,
         errorRate: item.total_attempts > 0 ? Math.round((item.error_count / item.total_attempts) * 100) : 0,
         optionStats: item.option_stats ? JSON.parse(item.option_stats) : {}
@@ -889,6 +892,7 @@ app.get('/api/onlineCount', async (c) => {
 });
 
 app.get('/api/userProgress', async (c) => {
+  c.header('Cache-Control','no-store');
   const user = c.get('user');
   const res = await c.env.DB.prepare('SELECT * FROM UserProgress WHERE user_id = ?').bind(user.id).first();
   if (!res) return c.json({ found: false });
@@ -899,20 +903,20 @@ app.get('/api/userProgress', async (c) => {
 });
 
 app.post('/api/secureSync', async (c) => {
-  const user = c.get('user');
-  const d = await c.req.json();
-  await c.env.DB.prepare(`
-    INSERT INTO UserProgress (user_id, brushed_ids, memorized_ids, mastered_ids, wrong_ids, favorite_ids, history, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET brushed_ids=excluded.brushed_ids, memorized_ids=excluded.memorized_ids, mastered_ids=excluded.mastered_ids, wrong_ids=excluded.wrong_ids, favorite_ids=excluded.favorite_ids, history=excluded.history, updated_at=excluded.updated_at
-  `).bind(user.id, JSON.stringify(d.brushedIds||[]), JSON.stringify(d.memorizedIds||[]), JSON.stringify(d.masteredIds||[]), JSON.stringify(d.wrongIds||[]), JSON.stringify(d.favoriteIds||[]), JSON.stringify(d.history||[]), new Date().toISOString()).run();
-  return c.json({ success: true });
+  try{
+    const user=c.get('user');
+    const d=await c.req.json();
+    const progress=await mergeUserProgress(c.env.DB,user.id,{legacy:d});
+    c.header('Cache-Control','no-store');
+    return c.json({success:true,progress});
+  }catch(e){return c.json({error:e.message},500);}
 });
 
 app.post('/api/recoverOutageStats', async (c) => c.json({ success: true }));
 
 // Extension API uses the same /api/* JWT authentication as Question-Bank.
-registerSiteSyncRoutes(app);
+registerSiteSyncRoutes(app)
+registerLearningRoutes(app);
 registerPasswordResetRoutes(app);
 
 export default app

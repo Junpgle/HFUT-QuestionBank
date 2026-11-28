@@ -8,27 +8,27 @@ const getToken = () => localStorage.getItem('auth_token');
 // 请求去重：同一 URL+方法+body 的并发请求只发一次
 const inflightRequests = new Map();
 
-function getRequestKey(endpoint, method, body, skipAuth = false) {
-  return `${method}:${endpoint}:${skipAuth ? 'pub' : 'auth'}:${body ? JSON.stringify(body) : ''}`;
+function getRequestKey(endpoint, method, body, skipAuth = false, token = '') {
+  return `${method}:${endpoint}:${skipAuth ? 'pub' : 'auth:'+token}:${body ? JSON.stringify(body) : ''}`;
 }
 
 export const api = {
   async request(endpoint, method = 'GET', body = null, options = {}) {
     const { skipAuth = false, keepalive = false, cache } = options;
+    const requestToken = skipAuth ? null : getToken();
     const headers = {};
     if (body !== null && body !== undefined) {
       headers['Content-Type'] = 'application/json';
     }
     if (!skipAuth) {
-      const token = getToken();
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (requestToken) headers['Authorization'] = `Bearer ${requestToken}`;
     }
 
     const safeEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     const url = `${API_BASE}${safeEndpoint}`;
 
     // GET 请求去重
-    const key = getRequestKey(safeEndpoint, method, body, skipAuth);
+    const key = getRequestKey(safeEndpoint, method, body, skipAuth, requestToken);
     if (method === 'GET' && inflightRequests.has(key)) {
       return inflightRequests.get(key);
     }
@@ -47,7 +47,7 @@ export const api = {
       const res = await fetch(url, fetchOptions);
 
       if (res.status === 401 && !skipAuth && safeEndpoint !== '/login') {
-        this.logout();
+        if (getToken() === requestToken) this.logout();
         return null;
       }
 
@@ -57,7 +57,9 @@ export const api = {
         data = JSON.parse(responseText);
       } catch {
         if (!res.ok) {
-          throw new Error(`[${res.status}] ${responseText || '服务器路径不存在'}`);
+          const err = new Error(`[${res.status}] ${responseText || '服务器路径不存在'}`);
+          err.status = res.status;
+          throw err;
         }
         return responseText;
       }
@@ -72,7 +74,7 @@ export const api = {
 
     if (method === 'GET') {
       inflightRequests.set(key, promise);
-      promise.finally(() => inflightRequests.delete(key));
+      promise.then(() => inflightRequests.delete(key), () => inflightRequests.delete(key));
     }
 
     return await promise;

@@ -2,7 +2,7 @@
 /*
 * version: 5.2.6 (Cloudflare Migration)
 * */
-import {useState, useEffect, useRef, useMemo} from 'react';
+import {useState, useEffect, useLayoutEffect, useRef, useMemo} from 'react';
 import {flushSync} from 'react-dom';
 import {api} from './api';
 import localforage from 'localforage';
@@ -34,7 +34,10 @@ import {DashboardMainContentShell} from './components/DashboardMainContentShell'
 import {QuizSidebar} from './components/QuizSidebar';
 import {QuizMobileTopBar} from './components/QuizMobileTopBar';
 import {QuizNavControls} from './components/QuizNavControls';
+import {ignoreQuizShortcut,quizShortcutAction} from './utils/quizShortcuts';
 import {QuizQuestionPanel} from './components/QuizQuestionPanel';
+import SmartLearning from './components/SmartLearning';
+import {recordPractice} from './learning/store';
 import {QuizDiscussionPanel} from './components/QuizDiscussionPanel';
 import {AutoMasterNoticeToast} from './components/AutoMasterNoticeToast';
 import {
@@ -48,6 +51,7 @@ import {
 } from './config/quizConfig';
 import {formatDate} from './utils/date';
 import {safeGet, safeSet} from './utils/storage';
+import {FIELDS,normalizeProgress,makeJournal,observeJournal,acknowledgeOps,reconcileProgress,coalesceOps,diffProgress,applyOps,mergeJournalWrite} from './utils/progressSync';
 import {normalizeSet, getQuestionSubjectId} from './utils/questionId';
 import {
     normalizeLastSession,
@@ -375,6 +379,21 @@ function App() {
     const selectorResolveRef = useRef(null);
     // 批量发送题目状态策略（随 sync-all 合并发送，攒够 40 题或切后台/定时同步时统一提交）
     const statsBuffer = useRef([]);
+    const statsOwnerRef=useRef(null);
+    const statsWriteRef=useRef(Promise.resolve());
+    const statsKey=uid=>'app_attempt_outbox_v1:'+uid;
+    const writeStats=(uid,add=[],ack=[])=>{
+        const run=async()=>{
+            const old=await localforage.getItem(statsKey(uid))||[];
+            const removed=new Set(ack);
+            const merged=[...new Map([...old,...add].filter(x=>x?.attemptId&&!removed.has(x.attemptId)).map(x=>[x.attemptId,x])).values()];
+            await localforage.setItem(statsKey(uid),merged);
+            return merged;
+        };
+        const p=statsWriteRef.current.catch(()=>{}).then(()=>navigator.locks?navigator.locks.request('qbank-attempt-outbox:'+uid,run):run());
+        statsWriteRef.current=p;
+        return p;
+    };
     const BATCH_THRESHOLD = 40;
     const VERSION_CHECK_INTERVAL = 12 * 60 * 60 * 1000;
     const INITIAL_SYNC_COOLDOWN = 2 * 60 * 1000;
@@ -429,10 +448,57 @@ function App() {
     // 🚀 优化逻辑 2: 多合一聚合同步 (心跳 + 进度双向同步 + 答题统计 + 版本检查)
     // ==========================================
     const progressDirtyRef = useRef(false);
-    const dirtyInitDoneRef = useRef(false);
-    const suppressDirtyRef = useRef(false);
-    const hasInitialSyncRef = useRef(false);
     const latestSyncDataRef = useRef(null);
+    const journalRef = useRef(null);
+    const [journalReady,setJournalReady]=useState(false);
+    const journalWriteRef=useRef(Promise.resolve());
+    const loginProgressRef=useRef(null);
+    const globalSyncRef=useRef(null);
+    const syncTimerRef=useRef(null);
+    const syncRetryRef=useRef(0);
+    const lastPullRef=useRef(0);
+    const journalKey=uid=>'app_progress_journal_v2:'+uid;
+    const currentView=()=>normalizeProgress(latestSyncDataRef.current||{});
+    const withJournalLock=(uid,fn)=>navigator.locks?navigator.locks.request('qbank-progress-journal:'+uid,fn):fn();
+    const persistJournal=(j,mode='local',cloud=null,ack=[])=>{
+        const previous=journalRef.current;
+        journalRef.current=j;
+        progressDirtyRef.current=!!j.pending.length;
+        const uid=j.userId;
+        const prior=String(previous?.userId)===String(uid)?previous:null;
+        journalWriteRef.current=journalWriteRef.current.catch(()=>{}).then(()=>withJournalLock(uid,async()=>{
+            const stored=await localforage.getItem(journalKey(uid));
+            const next=mergeJournalWrite(stored,prior,j,mode,cloud,ack);
+            await localforage.setItem(journalKey(uid),next);
+            return next;
+        })).catch(err=>{console.error('进度增量本地保存失败',err);setSyncStatus('error');setSyncMsg('本地进度保存失败');return null;});
+        return journalWriteRef.current;
+    };
+    const applyView=view=>{
+        const snap=latestSyncDataRef.current||{};
+        const next={};
+        for(const k of FIELDS)next[k]=new Set([...view[k],...Array.from(snap[k]||[]).filter(id=>String(id).startsWith('custom_'))]);
+        next.history=[...view.history,...(snap.history||[]).filter(h=>String(h?.questionId).startsWith('custom_'))].sort((x,y)=>Date.parse(y.timestamp)-Date.parse(x.timestamp));
+        latestSyncDataRef.current={...snap,...next};
+        setBrushedIds(next.brushedIds);setMemorizedIds(next.memorizedIds);setMasteredIds(next.masteredIds);setWrongIds(next.wrongIds);setFavoriteIds(next.favoriteIds);setHistory(next.history);
+    };
+    function captureProgress(){
+        const j=journalRef.current;
+        if(!j||String(j.userId)!==String(latestSyncDataRef.current?.currentUser?.id))return j;
+        const next=observeJournal(j,currentView());
+        if(next!==j)persistJournal({...next,dirtySince:j.dirtySince||Date.now(),lastChange:Date.now()});
+        return journalRef.current;
+    }
+    function scheduleProgressSync(){
+        clearTimeout(syncTimerRef.current);
+        const j=journalRef.current;
+        const snap=latestSyncDataRef.current;
+        if(!snap?.currentUser||!snap.hydrated||snap.apiLimitReached||navigator.onLine===false||String(j?.userId)!==String(snap.currentUser.id))return;
+        if(!j?.pending.length&&!statsBuffer.current.length)return;
+        const now=Date.now();
+        const due=Math.max(syncRetryRef.current,Math.min((j?.dirtySince||now)+300000,(j?.lastChange||now)+30000));
+        syncTimerRef.current=setTimeout(()=>performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:true}),Math.max(0,due-now));
+    }
 
     const applyRemoteVersion = (versionRes) => {
         try {
@@ -462,80 +528,80 @@ function App() {
         }
     };
 
-    const performGlobalSync = async ({
-        includeProgress = false,
-        includeStats = false,
-        pullProgress = false,
-        checkVersion = false,
-        heartbeat = true,
-        keepalive = false
-    } = {}) => {
-        const snapshot = latestSyncDataRef.current;
-        if (!snapshot?.currentUser || !snapshot?.hydrated || snapshot?.apiLimitReached) return null;
-
-        const shouldSendProgress = includeProgress && progressDirtyRef.current;
-        const pendingStats = includeStats && statsBuffer.current.length > 0
-            ? [...statsBuffer.current]
-            : null;
-
-        if (!shouldSendProgress && !pendingStats && !pullProgress && !checkVersion && !heartbeat) {
-            return null;
+    const performGlobalSync = (options={}) => {
+        if(globalSyncRef.current)return globalSyncRef.current;
+        const uid=latestSyncDataRef.current?.currentUser?.id;
+        const work=()=>runGlobalSync(options);
+        const p=(navigator.locks&&uid?navigator.locks.request('qbank-progress-network:'+uid,work):work()).finally(()=>{globalSyncRef.current=null;scheduleProgressSync();});
+        globalSyncRef.current=p;
+        return p;
+    };
+    const runGlobalSync = async ({
+        includeProgress=false,includeStats=false,pullProgress=false,checkVersion=false,heartbeat=true,keepalive=false,manual=false
+    }={})=>{
+        const snapshot=latestSyncDataRef.current;
+        let j=captureProgress();
+        if(!snapshot?.currentUser||!snapshot.hydrated||snapshot.apiLimitReached||!j||navigator.onLine===false)return null;
+        if(!manual&&Date.now()<syncRetryRef.current)return null;
+        const uid=snapshot.currentUser.id;
+        if(String(j.userId)!==String(uid))return null;
+        const durable=await journalWriteRef.current;
+        const disk=durable===null?null:await localforage.getItem(journalKey(uid)).catch(()=>null);
+        if(String(api.getCurrentUser()?.id)!==String(uid))return null;
+        if(disk?.view&&Array.isArray(disk.pending)&&String(disk.userId)===String(uid)){
+            const local=captureProgress();
+            const pending=coalesceOps(disk.pending,local.pending.filter(o=>!j.pending.some(x=>x.id===o.id)));
+            j={...disk,view:applyOps(disk.view,pending),pending};
+            journalRef.current=j;progressDirtyRef.current=!!pending.length;applyView(j.view);
         }
-
-        if (pendingStats) {
-            statsBuffer.current = [];
+        const ops=includeProgress?j.pending.slice(0,keepalive?100:1500):[];
+        if(includeStats){
+            try{const saved=await writeStats(uid);if(String(api.getCurrentUser()?.id)!==String(uid))return null;statsBuffer.current=[...new Map([...saved,...statsBuffer.current.filter(x=>statsOwnerRef.current===String(uid))].map(x=>[x.attemptId,x])).values()];statsOwnerRef.current=String(uid);}catch(err){console.warn('读取待同步答题统计失败',err);}
         }
-
-        const payload = {
-            heartbeat,
-            pullProgress,
-            checkVersion,
-            stats: pendingStats,
-            progress: shouldSendProgress ? {
-                brushedIds: Array.from(snapshot.brushedIds).filter(id => id && !id.startsWith('custom_')),
-                memorizedIds: Array.from(snapshot.memorizedIds).filter(id => id && !id.startsWith('custom_')),
-                masteredIds: Array.from(snapshot.masteredIds).filter(id => id && !id.startsWith('custom_')),
-                wrongIds: Array.from(snapshot.wrongIds).filter(id => id && !id.startsWith('custom_')),
-                favoriteIds: Array.from(snapshot.favoriteIds).filter(id => id && !id.startsWith('custom_')),
-                history: snapshot.history.filter(h => h && h.questionId && !h.questionId.startsWith('custom_')).slice(0, 500)
-            } : null
-        };
-
-        try {
-            if (shouldSendProgress && !keepalive) {
-                setSyncStatus('uploading');
-                setSyncMsg("同步中...");
-            }
-            const res = await api.syncAll(payload, keepalive ? { keepalive: true } : {});
-            if (res && res.success) {
-                if (res.onlineCount !== undefined) setOnlineCount(res.onlineCount);
-                if (heartbeat) lastHeartbeatAtRef.current = Date.now();
-                if (shouldSendProgress) {
-                    progressDirtyRef.current = false;
-                    invalidateReportBundleCache();
-                    if (!keepalive) {
-                        setSyncStatus('success');
-                        setSyncMsg("备份成功");
-                    }
-                }
-                if (pullProgress && res.progress) {
-                    await mergeCloudProgress(res.progress);
-                }
-                if (checkVersion && res.appVersion) {
-                    applyRemoteVersion(res.appVersion);
+        const stats=includeStats?statsBuffer.current.slice(0,50):[];
+        if(!ops.length&&!stats.length&&!pullProgress&&!checkVersion&&!heartbeat)return null;
+        // Never acknowledge pending progress or stats until the server confirms.
+        const payload={heartbeat,pullProgress:pullProgress||!!ops.length,checkVersion,stats:stats.length?stats:null,progressOps:ops.length||pullProgress?ops:null};
+        if(keepalive&&new TextEncoder().encode(JSON.stringify(payload)).length>60000)return null;
+        try{
+            if(ops.length&&!keepalive){setSyncStatus('uploading');setSyncMsg('同步中…');}
+            const res=await api.syncAll(payload,keepalive?{keepalive:true}:{});
+            if(!res?.success)throw Error('服务器未确认同步');
+            if(String(api.getCurrentUser()?.id)!==String(uid)||String(journalRef.current?.userId)!==String(uid))return null;
+            if(stats.length){
+                if(!Array.isArray(res.statsAck)||stats.some(s=>!res.statsAck.includes(s.attemptId)))throw Error('答题统计未获确认，请先更新后端');
+                const ids=new Set(res.statsAck);
+                await writeStats(uid,[],res.statsAck);
+                if(String(api.getCurrentUser()?.id)!==String(uid))return null;
+                statsBuffer.current=statsBuffer.current.filter(s=>!ids.has(s.attemptId));
+                // Invalidate only affected subjects; next ranking visit can refresh normally.
+                for(const subjectId of new Set(stats.map(s=>getQuestionSubjectId(s.questionId)).filter(Boolean))){
+                    delete rankingCacheRef.current[subjectId];
+                    try{localStorage.removeItem('app_ranking_cache_'+subjectId);}catch{}
                 }
             }
+            if(payload.progressOps!==null&&(res.progressProtocol!==2||!res.progress||!Array.isArray(res.ack)||ops.some(o=>!res.ack.includes(o.id))))throw Error('普通题库同步协议未更新，请先部署新版后端');
+            if(res.onlineCount!==undefined)setOnlineCount(res.onlineCount);
+            if(heartbeat)lastHeartbeatAtRef.current=Date.now();
+            if(payload.progressOps!==null){
+                const latest=captureProgress();
+                const pending=acknowledgeOps(latest.pending,res.ack);
+                const view=reconcileProgress(res.progress,latest.view,pending);
+                const next={...latest,view,pending,lastPull:Date.now(),dirtySince:pending.length?latest.dirtySince:0,lastChange:pending.length?latest.lastChange:0};
+                lastPullRef.current=next.lastPull;
+                applyView(view);
+                await persistJournal(next,'remote',res.progress,res.ack);
+                invalidateReportBundleCache();
+                if(!keepalive){setSyncStatus('success');setSyncMsg(pending.length?'已同步，仍有待上传记录':'同步成功');}
+            }
+            syncRetryRef.current=0;
+            if(checkVersion&&res.appVersion)applyRemoteVersion(res.appVersion);
             return res;
-        } catch (e) {
+        }catch(e){
+            syncRetryRef.current=Date.now()+60000;
             checkApiLimitError(e);
-            if (pendingStats && !keepalive) {
-                statsBuffer.current = [...pendingStats, ...statsBuffer.current];
-            }
-            console.error("同步失败", e);
-            if (shouldSendProgress && !keepalive) {
-                setSyncStatus('error');
-                setSyncMsg("同步失败");
-            }
+            console.error('普通题库同步失败',e);
+            if(!keepalive){setSyncStatus('error');setSyncMsg(e.message||'同步失败，本地记录保留');}
             return null;
         }
     };
@@ -557,111 +623,78 @@ function App() {
         };
     }, []); // ⚠️ 仅执行一次，手动切换时 setThemeMode 会直接调用 applyTheme
 
-    useEffect(() => {
-        latestSyncDataRef.current = {
-            currentUser,
-            hydrated,
-            apiLimitReached,
-            brushedIds,
-            memorizedIds,
-            masteredIds,
-            wrongIds,
-            favoriteIds,
-            history
-        };
-    }, [currentUser, hydrated, apiLimitReached, brushedIds, memorizedIds, masteredIds, wrongIds, favoriteIds, history]);
-
-    useEffect(() => {
-        if (!hydrated) return;
-        if (!dirtyInitDoneRef.current) {
-            dirtyInitDoneRef.current = true;
-            return;
+    useLayoutEffect(()=>{
+        latestSyncDataRef.current={currentUser,hydrated,apiLimitReached,brushedIds,memorizedIds,masteredIds,wrongIds,favoriteIds,history};
+        if(journalRef.current&&journalReady){
+            const before=journalRef.current;
+            const after=captureProgress();
+            if(after!==before)scheduleProgressSync();
         }
-        if (suppressDirtyRef.current) {
-            suppressDirtyRef.current = false;
-            return;
-        }
-        progressDirtyRef.current = true;
-    }, [brushedIds, memorizedIds, masteredIds, wrongIds, favoriteIds, history, hydrated]);
-
-    useEffect(() => {
-        if (!currentUser || !hydrated) return;
-        // 1. 首次水合完成时用 1 次 /sync-all 合并完成：心跳 + 拉取云端进度 + 按需检查版本（短时刷新直接跳过）
-        if (!hasInitialSyncRef.current) {
-            hasInitialSyncRef.current = true;
-            let skipInitial = false;
-            try {
-                const lastInitial = Number(sessionStorage.getItem('last_initial_sync_at') || 0);
-                if (Date.now() - lastInitial < INITIAL_SYNC_COOLDOWN) {
-                    skipInitial = true;
-                }
-            } catch {
-                // 忽略 sessionStorage 异常
+    },[currentUser,hydrated,apiLimitReached,brushedIds,memorizedIds,masteredIds,wrongIds,favoriteIds,history,journalReady]);
+    useEffect(()=>{
+        if(!currentUser||!hydrated)return;
+        const uid=currentUser.id;
+        let cancelled=false;
+        setJournalReady(false);
+        if(statsOwnerRef.current!==String(uid)){statsOwnerRef.current=String(uid);statsBuffer.current=[];}
+        writeStats(uid).then(saved=>{if(!cancelled&&statsOwnerRef.current===String(uid)){statsBuffer.current=[...new Map([...saved,...statsBuffer.current].map(x=>[x.attemptId,x])).values()];scheduleProgressSync();}}).catch(err=>console.warn('答题统计恢复失败',err));
+        const initialLocal=currentView();
+        (async()=>{
+            let saved=await localforage.getItem(journalKey(uid));
+            if(cancelled)return;
+            const local=currentView();
+            let owner=null;try{owner=localStorage.getItem('qbank_progress_owner');}catch{}
+            let j=saved?.view&&Array.isArray(saved.pending)?saved:makeJournal(owner&&owner!==String(uid)?{}:local);
+            if(saved?.view){const edits=diffProgress(initialLocal,local);j={...j,view:applyOps(j.view,edits),pending:coalesceOps(j.pending,edits)};}
+            j={...j,userId:uid};
+            try{localStorage.setItem('qbank_progress_owner',String(uid));}catch{}
+            const initial=loginProgressRef.current;
+            const hasLoginProgress=initial&&String(initial.uid)===String(uid);
+            if(hasLoginProgress){
+                j.view=reconcileProgress(initial.progress,j.view,j.pending);
+                j.lastPull=Date.now();loginProgressRef.current=null;
             }
-            if (!skipInitial) {
-                try {
-                    sessionStorage.setItem('last_initial_sync_at', String(Date.now()));
-                } catch {
-                    // 忽略 sessionStorage 异常
-                }
-                performGlobalSync({
-                    heartbeat: true,
-                    pullProgress: true,
-                    checkVersion: needsVersionCheck()
-                });
-            }
-        }
-
-        // 记录用户近期交互时间，长时挂机不再白发心跳
-        const markActive = () => {
-            lastActiveAtRef.current = Date.now();
+            lastPullRef.current=j.lastPull||0;
+            // The account journal is the durable source for pending removals and additions after reload.
+            applyView(j.view);
+            const stored=await persistJournal(j,hasLoginProgress?'remote':'init',hasLoginProgress?initial.progress:null);
+            if(stored&&journalRef.current===j){journalRef.current=stored;progressDirtyRef.current=!!stored.pending.length;applyView(stored.view);}
+            if(cancelled)return;
+            setJournalReady(true);
+        })().catch(e=>{console.error('进度日志加载失败',e);setSyncStatus('error');setSyncMsg('本地进度日志读取失败');});
+        return ()=>{cancelled=true;clearTimeout(syncTimerRef.current);};
+    },[currentUser?.id,hydrated]);
+    useEffect(()=>{
+        if(!currentUser||!hydrated||!journalReady||String(journalRef.current?.userId)!==String(currentUser.id))return;
+        const refresh=()=>{
+            if(document.hidden||navigator.onLine===false)return;
+            const dirty=progressDirtyRef.current||statsBuffer.current.length>0;
+            const due=Date.now()-lastPullRef.current>=INITIAL_SYNC_COOLDOWN;
+            if(dirty||due)performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:true,checkVersion:needsVersionCheck()});
         };
-        window.addEventListener('pointerdown', markActive, { passive: true });
-        window.addEventListener('keydown', markActive, { passive: true });
-
-        // 2. 每 10 分钟定时检查：优先同步脏进度/答题统计，无变更且活跃时每 15 分钟发一次心跳
-        const timer = setInterval(() => {
-            if (typeof document !== 'undefined' && document.hidden) return;
-            const hasDirty = progressDirtyRef.current || statsBuffer.current.length > 0;
-            if (hasDirty) {
-                performGlobalSync({ includeProgress: true, includeStats: true, heartbeat: true });
-                return;
-            }
-            const now = Date.now();
-            const recentlyActive = now - lastActiveAtRef.current < HEARTBEAT_IDLE_LIMIT;
-            const heartbeatDue = now - lastHeartbeatAtRef.current >= HEARTBEAT_IDLE_LIMIT;
-            if (recentlyActive && heartbeatDue) {
-                performGlobalSync({ includeProgress: false, includeStats: false, heartbeat: true });
-            }
-        }, 10 * 60 * 1000);
-
-        // 3. 切到后台或关闭页面时，用 keepalive 兜底提交未落盘的脏进度与统计
-        const flushOnLeave = () => {
-            if (progressDirtyRef.current || statsBuffer.current.length > 0) {
-                performGlobalSync({
-                    includeProgress: true,
-                    includeStats: true,
-                    heartbeat: false,
-                    keepalive: true
-                });
-            }
+        if(progressDirtyRef.current||Date.now()-lastPullRef.current>=INITIAL_SYNC_COOLDOWN)refresh();
+        const markActive=()=>{lastActiveAtRef.current=Date.now();};
+        const timer=setInterval(()=>{
+            if(document.hidden)return;
+            if(progressDirtyRef.current||statsBuffer.current.length){performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:true});return;}
+            if(Date.now()-lastActiveAtRef.current<HEARTBEAT_IDLE_LIMIT&&Date.now()-lastHeartbeatAtRef.current>=HEARTBEAT_IDLE_LIMIT)performGlobalSync({pullProgress:true,heartbeat:true});
+        },5*60*1000);
+        const flushOnLeave=()=>{if(progressDirtyRef.current||statsBuffer.current.length)performGlobalSync({includeProgress:true,includeStats:true,heartbeat:false,keepalive:true});};
+        const visibility=()=>{if(document.hidden)flushOnLeave();else refresh();};
+        window.addEventListener('pointerdown',markActive,{passive:true});
+        window.addEventListener('keydown',markActive,{passive:true});
+        window.addEventListener('focus',refresh);
+        window.addEventListener('online',refresh);
+        window.addEventListener('pagehide',flushOnLeave);
+        document.addEventListener('visibilitychange',visibility);
+        scheduleProgressSync();
+        return ()=>{
+            clearInterval(timer);clearTimeout(syncTimerRef.current);
+            window.removeEventListener('pointerdown',markActive);window.removeEventListener('keydown',markActive);
+            window.removeEventListener('focus',refresh);window.removeEventListener('online',refresh);
+            window.removeEventListener('pagehide',flushOnLeave);document.removeEventListener('visibilitychange',visibility);
         };
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === 'hidden') {
-                flushOnLeave();
-            }
-        };
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        window.addEventListener('pagehide', flushOnLeave);
-
-        return () => {
-            clearInterval(timer);
-            window.removeEventListener('pointerdown', markActive);
-            window.removeEventListener('keydown', markActive);
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            window.removeEventListener('pagehide', flushOnLeave);
-        };
-    }, [currentUser, hydrated]);
+    },[currentUser?.id,hydrated,journalReady]);
     // ==========================================
     // 🚀 优化逻辑 3: 互动内容批量滑窗加载 + 2小时持久化缓存
     // ==========================================
@@ -1429,164 +1462,13 @@ function App() {
         }
     };
     // ✅ 改动：手动同步 (适配 Cloudflare 后端 secureSync)
-    const handleManualSync = async (silent = false) => {
-        if (!currentUser) return;
-        if (!silent) {
-            const ok = window.confirm(
-                "将备份到云端的内容：\n- 内置题库（含文物精品与中华文明）的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录（最多500条）\n\n不会备份：\n- 自定义题库及其进度（仅保留本地）\n\n是否继续备份？"
-            );
-            if (!ok) return;
-        }
-        if (!silent) {
-            setSyncStatus('uploading');
-            setSyncMsg("备份中...");
-        }
-        try {
-            // Cloudflare 模式下，currentUser 是普通对象
-            const email = currentUser.email;
-            if (!email) {
-                if (!silent) {
-                    setSyncStatus('error');
-                    setSyncMsg("需绑定邮箱");
-                    alert("同步失败：\n为了您的数据安全，系统要求必须绑定邮箱才能进行云端备份。\n\n请在注册/设置中绑定邮箱。");
-                }
-                return;
-            }
-            // 调用后端
-            const snapshot = getProgressSnapshot('all');
-            const response = await api.request('/secureSync', 'POST', {
-                brushedIds: sanitizeCloudIds(snapshot.brushed),
-                memorizedIds: sanitizeCloudIds(snapshot.memorized),
-                masteredIds: sanitizeCloudIds(snapshot.mastered),
-                wrongIds: sanitizeCloudIds(snapshot.wrong),
-                favoriteIds: sanitizeCloudIds(snapshot.favorite),
-                history: sanitizeCloudHistory(snapshot.history).slice(0, 500) // 限制长度
-            });
-            if (response && response.success) {
-                progressDirtyRef.current = false;
-                invalidateReportBundleCache();
-                if (!silent) {
-                    setSyncStatus('success');
-                    setSyncMsg("备份成功");
-                    alert("备份完成：已将全部内置题库的答题状态与历史记录同步到云端；自定义题库未上传。");
-                }
-            } else {
-                return Promise.reject(new Error(response ? response.message : "云端未返回成功状态"));
-            }
-        } catch (e) {
-            checkApiLimitError(e);
-            if (!silent) {
-                setSyncStatus('error');
-                let displayMsg = "备份失败";
-                const serverMsg = e.message || "";
-                if (serverMsg.includes("邮箱")) {
-                    displayMsg = "需验证邮箱";
-                    alert("同步失败：\n" + serverMsg);
-                } else if (serverMsg.includes("速度过快") || serverMsg.includes("异常")) {
-                    displayMsg = "被拦截";
-                    alert("同步被拒绝：\n" + serverMsg);
-                } else if (serverMsg.includes("Forbidden") || e.code === 403) {
-                    displayMsg = "权限不足";
-                }
-                setSyncMsg(displayMsg);
-            }
-            console.error("云同步失败:", e);
-        }
+    const handleManualSync=async(silent=false)=>{
+        if(!currentUser||!journalReady)return;
+        if(!silent&&!window.confirm('双向同步全部内置题库的答题状态及最近500条历史记录。自定义题库仍仅保留本地。是否继续？'))return;
+        const res=await performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:false,manual:true});
+        if(!silent)alert(res?.success?'同步完成：本地与云端已合并；剩余待上传记录将继续同步。':'同步失败，本地记录仍保留。请确认后端已更新并重试。');
     };
-    // 如果您需要此功能，请在后端添加 GET 接口。
-    const mergeCloudProgress = async (data) => {
-        if (!data) return false;
-        const latest = latestSyncDataRef.current;
-        let newBrushed = new Set(latest?.brushedIds || brushedIds);
-        let newMemorized = new Set(latest?.memorizedIds || memorizedIds);
-        let newMastered = new Set(latest?.masteredIds || masteredIds);
-        let newWrong = new Set(latest?.wrongIds || wrongIds);
-        let newFavorite = new Set(latest?.favoriteIds || favoriteIds);
-        let newHistory = [...(latest?.history || history)];
-        const getArr = (v) => {
-            if (Array.isArray(v)) return v;
-            if (typeof v === 'string') {
-                try {
-                    return JSON.parse(v);
-                } catch {
-                    return [];
-                }
-            }
-            return [];
-        };
-        const cloudBrushed = itemsWithoutCustom(getArr(data.brushedIds));
-        const cloudMemorized = itemsWithoutCustom(getArr(data.memorizedIds));
-        const cloudMastered = itemsWithoutCustom(getArr(data.masteredIds));
-        const cloudWrong = itemsWithoutCustom(getArr(data.wrongIds));
-        const cloudFavorite = itemsWithoutCustom(getArr(data.favoriteIds));
-        const cloudHistory = getArr(data.history).filter(h => h && h.questionId && !String(h.questionId).startsWith('custom_'));
-        if (cloudBrushed.length) newBrushed = new Set([...newBrushed, ...cloudBrushed]);
-        if (cloudMemorized.length) newMemorized = new Set([...newMemorized, ...cloudMemorized]);
-        if (cloudMastered.length) newMastered = new Set([...newMastered, ...cloudMastered]);
-        if (cloudWrong.length) newWrong = new Set([...newWrong, ...cloudWrong]);
-        if (cloudFavorite.length) newFavorite = new Set([...newFavorite, ...cloudFavorite]);
-        if (cloudHistory.length) {
-            const existingIds = new Set(newHistory.map(h => h.id));
-            newHistory = [...cloudHistory.filter(h => !existingIds.has(h.id)), ...newHistory]
-                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        }
-        if (!progressDirtyRef.current) {
-            suppressDirtyRef.current = true;
-        }
-        setBrushedIds(newBrushed);
-        setMemorizedIds(newMemorized);
-        setMasteredIds(newMastered);
-        setWrongIds(newWrong);
-        setFavoriteIds(newFavorite);
-        setHistory(newHistory);
-        await Promise.all([
-            safeSet('app_brushedIds', Array.from(newBrushed)),
-            safeSet('app_memorizedIds', Array.from(newMemorized)),
-            safeSet('app_masteredIds', Array.from(newMastered)),
-            safeSet('app_wrongIds', Array.from(newWrong)),
-            safeSet('app_favoriteIds', Array.from(newFavorite)),
-            safeSet('app_history', newHistory)
-        ]);
-        return true;
-    };
-
-    const handleManualRestore = async (silent = false) => {
-        if (!currentUser) return;
-        if (!silent) {
-            const ok = window.confirm(
-                "将从云端恢复的内容：\n- 内置题库（含文物精品与中华文明）的答题状态（已刷/已背/已掌握/错题/收藏）\n- 历史记录\n\n恢复方式：与本地合并去重，不会覆盖自定义题库。\n\n是否继续恢复？"
-            );
-            if (!ok) return;
-        }
-        if (!silent) {
-            setSyncStatus('downloading');
-            setSyncMsg("恢复中...");
-        }
-        try {
-            const result = await api.request(`/userProgress?_t=${Date.now()}`);
-            if (result && result.progress) {
-                await mergeCloudProgress(result.progress);
-                if (!silent) {
-                    setSyncStatus('success');
-                    setSyncMsg("同步完成");
-                    alert("恢复完成：已从云端合并恢复全部内置题库的答题状态与历史记录；自定义题库未受影响。");
-                }
-            } else {
-                if (!silent) {
-                    setSyncMsg("无数据");
-                    setSyncStatus(null);
-                    alert("云端暂无备份数据。\n请确认已在电脑端点击「备份」并提示成功，且手机端登录的是同一个账号。");
-                }
-            }
-        } catch (e) {
-            console.error(e);
-            if (!silent) {
-                setSyncStatus('error');
-                setSyncMsg("失败");
-                alert("恢复失败：" + (e.message || "网络异常，请稍后重试"));
-            }
-        }
-    };
+    const handleManualRestore=handleManualSync;
     /**
      * 【新增】本地刷题记录导出为 JSON 文件
      */
@@ -2139,19 +2021,27 @@ function App() {
         setShowSearchResults(true);
     };
     // ✅ 提交问题结果 (推入缓冲池，攒够 40 题随 sync-all 合并上报)
-    const submitQuestionResult = async (questionId, isCorrect, questionTitle, category, userAnswer = '') => {
-        if (questionId && questionId.startsWith('custom_')) return; // 自定义离线题库不提交结果
-        if (!currentUser) return;
-        statsBuffer.current.push({
-            questionId,
-            isCorrect,
-            questionTitle,
-            category,
-            userAnswer
-        });
-        if (statsBuffer.current.length >= BATCH_THRESHOLD) {
-            await performGlobalSync({ includeProgress: true, includeStats: true, heartbeat: true });
-        }
+    const submitQuestionResult = async (questionId,isCorrect,questionTitle,category,userAnswer='',attemptId=crypto.randomUUID())=>{
+        if(!questionId||questionId.startsWith('custom_')||!currentUser)return;
+        const uid=currentUser.id;
+        if(String(api.getCurrentUser()?.id)!==String(uid))return;
+        if(statsOwnerRef.current!==String(uid)){statsOwnerRef.current=String(uid);statsBuffer.current=[];}
+        if(statsBuffer.current.some(s=>s.attemptId===attemptId))return;
+        const attempt={attemptId,questionId,isCorrect:!!isCorrect,questionTitle,category,userAnswer};
+        statsBuffer.current.push(attempt);
+        try{await writeStats(uid,[attempt]);}catch(err){console.error('答题统计本地保存失败',err);setSyncMsg('答题统计待保存');}
+        scheduleProgressSync();
+        if(statsBuffer.current.length>=BATCH_THRESHOLD)setTimeout(()=>performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:true}),0);
+    };
+    const handleLearningAttempt=async attempt=>{
+        if(!attempt)return;
+        applyResultStats(attempt.questionId,attempt.personalCorrect,{countMastered:attempt.countMastered,source:'smart-learning'});
+        setHistory(prev=>prev.some(h=>h.id===attempt.attemptId)?prev:[{
+            id:attempt.attemptId,questionId:attempt.questionId,questionTitle:attempt.questionTitle,
+            action:'answer',source:'smart-learning',isCorrect:attempt.personalCorrect,
+            objectiveCorrect:attempt.objective?attempt.isCorrect:undefined,userAnswer:attempt.userAnswer,timestamp:attempt.timestamp
+        },...prev]);
+        if(attempt.objective)await submitQuestionResult(attempt.questionId,attempt.isCorrect,attempt.questionTitle,attempt.category,attempt.userAnswer,attempt.attemptId);
     };
     const getQuestionDetails = (questionId) => {
         for (const lectureId in allQuestionBank) {
@@ -2743,11 +2633,17 @@ function App() {
         setSyncStatus('success');
         setSyncMsg('备注已保存（本地）');
     };
+    const quizCommitRef=useRef(null);
+    const claimQuizAnswer=(q)=>{
+        if(!q||isAnswered||quizCommitRef.current===q.id)return false;
+        quizCommitRef.current=q.id;return true;
+    };
+    useLayoutEffect(()=>{quizCommitRef.current=null;},[currentIndex,currentMode,questions]);
     const handleOptionClick = (idx) => {
         // 如果是背题模式，或者已经作答过了，点击无效
         if (currentMode === 'memorize' || isAnswered) return;
         const currentQ = questions[currentIndex];
-        if (currentQ.type === 'fill' && currentMode !== 'memorize') return;
+        if (!currentQ||currentQ.type === 'fill') return;
         // 多选题逻辑：点击只是选中/取消选中，不自动提交
         if (currentQ.type === 'multiple') {
             setSelectedIndices(prev =>
@@ -2780,7 +2676,10 @@ function App() {
         }
         return [];
     };
-    const applyResultStats = (questionId, isCorrect, {countMastered = true} = {}) => {
+    const applyResultStats = (questionId, isCorrect, {countMastered = true,source='practice'} = {}) => {
+        // Only enrolled smart-learning cards receive new practice evidence; old records remain intact.
+        if (selectedSubject&&source!=='smart-learning') recordPractice(currentUser, selectedSubject, questionId, isCorrect, !countMastered)
+            .catch(err => console.warn('智能学习记录写入失败，原刷题记录不受影响', err));
         setBrushedIds(prev => new Set(prev).add(questionId));
         if (isCorrect) {
             setWrongIds(prev => {
@@ -2827,6 +2726,7 @@ function App() {
         const normalizedSelection = normalizeAnswerIndices(finalSelection);
         if (normalizedSelection.length === 0) return;
         const currentQ = questions[currentIndex];
+        if(!claimQuizAnswer(currentQ))return;
         // 1. 判定对错
         const correctSet = new Set(normalizeAnswerIndices(currentQ.rawAnswer));
         const userSet = new Set(normalizedSelection);
@@ -2846,7 +2746,7 @@ function App() {
         submitQuestionResult(currentQ.id, isCorrect, currentQ.question, currentQ.category, answerText);
         // 5. 记录本地历史
         setHistory(prev => [{
-            id: Date.now(),
+            id: crypto.randomUUID(),
             questionId: currentQ.id,
             questionTitle: currentQ.question,
             action: 'answer',
@@ -2861,7 +2761,7 @@ function App() {
         if (!currentQ) return;
         const blanks = parseFillAnswer(currentQ.options?.[0], currentQ.question);
         const inputs = blanks.map((_, i) => String(fillInputs[i] || '').trim());
-        if (inputs.every(v => !v)) return;
+        if (inputs.every(v => !v)||!claimQuizAnswer(currentQ)) return;
         const {isCorrect} = gradeFill(inputs, blanks);
         const answerText = inputs.join('；');
         setIsAnswered(true);
@@ -2873,7 +2773,7 @@ function App() {
         applyResultStats(currentQ.id, isCorrect, {countMastered: !usedHint});
         submitQuestionResult(currentQ.id, isCorrect, currentQ.question, currentQ.category, answerText.slice(0, 60));
         setHistory(prev => [{
-            id: Date.now(),
+            id: crypto.randomUUID(),
             questionId: currentQ.id,
             questionTitle: currentQ.question,
             action: 'answer',
@@ -2885,13 +2785,13 @@ function App() {
     const handleMemorizeCheck = () => {
         setMemorizedIds(prev => new Set(prev).add(questions[currentIndex].id));
         setHistory(prev => [{
-            id: Date.now(),
+            id: crypto.randomUUID(),
             questionId: questions[currentIndex].id,
             questionTitle: questions[currentIndex].question,
             action: 'memorize',
             timestamp: new Date().toISOString(),
         }, ...prev]);
-        setTimeout(() => nextQuestion(), 400);
+        nextQuestion();
     };
     const startMode = (mode) => {
         const action = () => {
@@ -2967,6 +2867,45 @@ function App() {
             setCurrentMode('dashboard');
         });
     };
+    // Deliberately reveal an unattempted objective answer as a failed recall, not a silent skip.
+    const revealQuizAnswer=()=>{
+        const q=questions[currentIndex];
+        if(!q||q.type==='big'||!claimQuizAnswer(q))return;
+        const answer='忘记了';
+        const id=crypto.randomUUID();
+        setIsAnswered(true);setShowExplanation(true);
+        setSelectedByQuestion(prev=>({...prev,[q.id]:selectedIndices}));
+        if(q.type==='fill')setFillInputsByQuestion(prev=>({...prev,[q.id]:fillInputs}));
+        applyResultStats(q.id,false);
+        submitQuestionResult(q.id,false,q.question,q.category,answer,id);
+        setHistory(prev=>[{id,questionId:q.id,questionTitle:q.question,action:'answer',isCorrect:false,userAnswer:answer,timestamp:new Date().toISOString()},...prev]);
+    };
+    // Window listener only while a regular practice screen is active; smart learning owns its keys.
+    useEffect(()=>{
+        if(!['quiz','memorize','mistakes','favorites'].includes(currentMode)||!questions[currentIndex]||showLoginScreen||showUploadModal||showAiModal||showApiSettingsModal||showResetModal||showUpdateModal||selectorModal.open||viewingRankQuestion)return;
+        const onKey=e=>{
+            if(ignoreQuizShortcut(e)||document.querySelector('dialog[open],[role="dialog"][aria-modal="true"]'))return;
+            const q=questions[currentIndex];
+            const action=quizShortcutAction(e.key,{mode:currentMode,type:q.type,answered:isAnswered,selectedCount:selectedIndices.length,optionCount:q.options?.length||0,canGoBack:currentIndex>0});
+            if(!action)return;
+            // Keep Enter/Space activation for non-answer controls reached with Tab.
+            const focused=e.target?.closest?.('button,a[href],[role="button"]');
+            if((e.key===' '||e.key==='Enter')&&focused&&!focused.hasAttribute('data-quiz-option')&&!focused.hasAttribute('data-quiz-action'))return;
+            e.preventDefault();
+            switch(action.type){
+                case 'exit':exitToDashboard();break;
+                case 'previous':prevQuestion();break;
+                case 'next':nextQuestion();break;
+                case 'memorize':handleMemorizeCheck();break;
+                case 'option':handleOptionClick(action.index);break;
+                case 'submit':submitAnswer();break;
+                case 'submit-fill':document.querySelector('[data-quiz-fill-submit]:not([disabled])')?.click();break;
+                case 'reveal':revealQuizAnswer();break;
+            }
+        };
+        window.addEventListener('keydown',onKey);
+        return ()=>window.removeEventListener('keydown',onKey);
+    });
     const switchSubject = () => {
         if (sessionAutoSaveTimerRef.current) {
             clearTimeout(sessionAutoSaveTimerRef.current);
@@ -3246,6 +3185,7 @@ function App() {
                                         </div>
                                     </div>
                                 </div>
+                                <button type="button" disabled={bankStatus !== 'ready'} onClick={() => setCurrentMode('smart-learning')} className="w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white py-3.5 px-4 font-bold shadow-lg shadow-indigo-500/20 hover:shadow-xl hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex justify-center items-center gap-2 text-sm md:text-base"><Brain size={20}/> 智能学习 · 考试计划</button>
                                 <div className="grid grid-cols-2 gap-4 pt-2">
                                     <button onClick={() => generateAndStartQuiz('quiz')}
                                             disabled={bankStatus !== 'ready'}
@@ -3555,6 +3495,8 @@ function App() {
                                     onPrev={prevQuestion}
                                     onNext={nextQuestion}
                                     onMemorizeNext={handleMemorizeCheck}
+                                    questionType={currentQ.type}
+                                    isAnswered={isAnswered}
                                 />
                             </div>
                             {showContent && (
@@ -3608,17 +3550,9 @@ function App() {
                 setAuthError(null);
                 try {
                     const res = await api.loginWithProgress(username, password);
-                    hasInitialSyncRef.current = true;
                     lastHeartbeatAtRef.current = Date.now();
-                    try {
-                        sessionStorage.setItem('last_initial_sync_at', String(Date.now()));
-                    } catch {
-                        // 忽略 sessionStorage 异常
-                    }
+                    loginProgressRef.current={uid:res.user.id,progress:res.initialProgress||{}};
                     setCurrentUser(res.user);
-                    if (res.initialProgress) {
-                        await mergeCloudProgress(res.initialProgress);
-                    }
                     if (res.onlineCount !== undefined) {
                         setOnlineCount(res.onlineCount);
                     }
@@ -3750,6 +3684,7 @@ function App() {
     return (
         <div className="h-full font-sans text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             {currentMode === 'dashboard' && renderDashboard()}
+            {currentMode === 'smart-learning' && selectedSubject && <SmartLearning key={String(currentUser?.id ?? 'guest') + ':' + selectedSubject} subject={selectedSubject} subjectName={currentSubject?.name || selectedSubject} bank={allQuestionBank} user={currentUser} wrongIds={wrongIds} brushedIds={brushedIds} onAttempt={handleLearningAttempt} onBack={() => setCurrentMode('dashboard')} />}
             {['quiz', 'memorize', 'mistakes', 'favorites'].includes(currentMode) && renderCard()}
             {currentMode === 'ranking' && renderRankingPage()}
             {viewingRankQuestion && renderQuestionDetailModal()}

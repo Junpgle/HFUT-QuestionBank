@@ -33,9 +33,10 @@ export function RankingPage({ wrongQuestionRanking, onBack, onRefresh, onOpenQue
                       <h3 className="font-semibold text-slate-800 dark:text-slate-100 text-base md:text-lg leading-snug group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">{item.questionTitle}</h3>
                       <span className="shrink-0 px-3 py-1 bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 rounded-lg text-sm font-bold">错{item.errorCount}次</span>
                     </div>
-                    <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+                    <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
                       <span className="flex items-center gap-1"><Layers size={14} /> {item.category}</span>
                       <span className="flex items-center gap-1"><AlertTriangle size={14} /> 错误率 {item.errorRate}%</span>
+                      {item.trackedWrongUsers!==undefined&&<span title="仅统计新版答题事件的去重人数，旧版历史无法回溯">新版出错 {item.trackedWrongUsers} 人</span>}
                     </div>
                   </div>
                   <div className="shrink-0 flex items-center">

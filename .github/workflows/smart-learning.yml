@@ -1,0 +1,54 @@
+name: Smart learning checks
+on:
+  pull_request:
+    paths:
+      - 'hfut-quiz_cf/**'
+      - 'hfut-backend/**'
+      - '.github/workflows/smart-learning.yml'
+  workflow_dispatch:
+concurrency:
+  group: smart-learning-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  learning:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: hfut-quiz_cf/package-lock.json
+      - name: Verify scheduler and existing question parsers
+        working-directory: hfut-quiz_cf
+        run: node --test src/learning/scheduler.test.js src/learning/backup.test.js src/learning/sync.test.js src/learning/attempt.test.js src/utils/progressSync.test.js src/utils/quizShortcuts.test.js src/utils/culturalRelics.test.js
+      - name: Verify learning database migration and sync
+        run: node --test hfut-backend/src/learning-sync.test.mjs hfut-backend/src/progress-merge.test.mjs hfut-backend/src/attempt-stats.test.mjs
+      - name: Install frontend dependencies
+        working-directory: hfut-quiz_cf
+        run: npm ci
+      - name: Build frontend
+        working-directory: hfut-quiz_cf
+        run: npm run build
+      - name: Check Worker source
+        run: |
+          node --check hfut-backend/src/index.js
+          node --check hfut-backend/src/learning-sync.js
+      - name: Install isolated browser test dependency
+        working-directory: hfut-quiz_cf
+        run: npm install --no-save --package-lock=false @playwright/test@1.56.1
+      - name: Install Chromium
+        working-directory: hfut-quiz_cf
+        run: npx playwright install --with-deps chromium
+      - name: Verify smart-learning browser interactions
+        working-directory: hfut-quiz_cf
+        run: npx playwright test --config playwright.learning.config.mjs
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-learning-browser-diagnostics
+          path: hfut-quiz_cf/test-results
+          if-no-files-found: ignore

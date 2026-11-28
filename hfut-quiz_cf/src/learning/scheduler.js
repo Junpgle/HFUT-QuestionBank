@@ -2,6 +2,9 @@
 // https://open-spaced-repetition.github.io/ts-fsrs/guide/model/fsrs-4dot5
 // Intra-day learning steps and exam deadlines are separate product policies.
 export const DAY = 86400000;
+export const FIRST_RECALL_DELAY = 30000;
+const FIRST_RECALL_STEPS=2;
+const HARD_FIRST_RECALL_STEPS=1;
 const W = [0.4872,1.4003,3.7145,13.8206,5.1618,1.2298,0.8975,0.031,1.6474,0.1367,1.0461,2.1072,0.0793,0.3246,1.587,0.2272,2.8755];
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 export const MODEL = 'fsrs-4.5-qbank-1';
@@ -71,7 +74,7 @@ export function replayEvents(events) {
       if(cards[id])continue;
       step++;lastId=id;
       const d=localDay(e.at);
-      cards[id]={phase:'learning',introducedDay:d,firstSeen:e.at,due:e.at+30000,eligibleStep:step+(e.difficult?2:3),attempts:0};
+      cards[id]={phase:'learning',introducedDay:d,firstSeen:e.at,due:e.at+FIRST_RECALL_DELAY,eligibleStep:step+(e.difficult?HARD_FIRST_RECALL_STEPS:FIRST_RECALL_STEPS),attempts:0};
       (activity[d]??={new:0,attempts:0,success:0,crossDay:0,crossSuccess:0}).new++;
       (byQuestion[id]??=[]).push({day:d,kind:'intro',at:e.at});
     }else if(e.kind==='rate'&&cards[id]){
@@ -108,8 +111,13 @@ export function memoryLevel(card,now){
   if(card.stability>=7&&recallProbability(card,now)>=.9)return 'stable';
   return 'learning';
 }
+const firstRecall=c=>c?.phase==='learning'&&!c.lastReview&&!c.stability;
+const canRetryToday=(c,now)=>c.attemptDay!==localDay(now)||c.attempts<4;
 export function nextShortTime(ids,state,now){
-  const times=ids.map(id=>state.cards[id]).filter(c=>c&&c.phase!=='review').map(c=>Math.max(c.due,(c.lastReview||c.firstSeen)+180000,c.attemptDay===localDay(now)&&c.attempts>=4?nextDay(now):0));
+  const times=ids.map(id=>state.cards[id]).filter(c=>c&&c.phase!=='review').map(c=>{
+    if(firstRecall(c))return c.due;
+    return Math.max(c.due,(c.lastReview||c.firstSeen)+180000,canRetryToday(c,now)?0:nextDay(now));
+  });
   return times.length?Math.min(...times):null;
 }
 export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
@@ -117,9 +125,15 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   if(!plan)return null;
   const p=dailyPlan(ids,cards,plan,now);
   const candidates=ids.filter(id=>id!==lastId);
-  const short=candidates.filter(id=>cards[id]&&cards[id].phase!=='review'&&cards[id].due<=now&&
-    (cards[id].attemptDay!==localDay(now)||cards[id].attempts<4)&&
-    (cards[id].eligibleStep<=step||localDay(cards[id].lastReview||cards[id].firstSeen)!==localDay(now)));
+  const short=candidates.filter(id=>{
+    const c=cards[id];
+    if(!c||c.phase==='review'||!canRetryToday(c,now))return false;
+    // First exposure: spacing by intervening completed tasks OR time, not both.
+    // Two normal intervening tasks (one for hard cards) ensure fast learners
+    // never have to finish the whole new-card quota before testing recall.
+    if(firstRecall(c))return c.eligibleStep<=step||c.due<=now;
+    return c.due<=now&&(c.eligibleStep<=step||localDay(c.lastReview||c.firstSeen)!==localDay(now));
+  });
   short.sort((a,b)=>cards[a].due-cards[b].due);
   const due=candidates.filter(id=>isReviewDue(cards[id],plan,now)).sort((a,b)=>recallProbability(cards[a],now)-recallProbability(cards[b],now));
   const priority=new Map([...new Set(priorityIds)].map((id,i)=>[id,i]));
@@ -130,9 +144,10 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   if(due.length&&(!allowNew||step%2===1))return {id:due[0],kind:'review'};
   if(allowNew)return {id:fresh,kind:'intro'};
   if(due.length)return {id:due[0],kind:'review'};
-  // At end of queue allow short steps after a real delay; never instantly repeat.
+  // With no other work, first exposure needs only its short time delay.
+  // Later failed/hard attempts retain their original relearning intervals.
   const fallback=ids.filter(id=>{
-    const c=cards[id];return c&&c.phase!=='review'&&c.due<=now&&now-(c.lastReview||c.firstSeen)>=180000&&(c.attemptDay!==localDay(now)||c.attempts<4);
+    const c=cards[id];return c&&c.phase!=='review'&&c.due<=now&&canRetryToday(c,now)&&(firstRecall(c)||now-(c.lastReview||c.firstSeen)>=180000);
   }).sort((a,b)=>cards[a].due-cards[b].due);
   if(fallback.length)return {id:fallback[0],kind:'recall'};
   // Single-question review sessions must still be usable on the next day.

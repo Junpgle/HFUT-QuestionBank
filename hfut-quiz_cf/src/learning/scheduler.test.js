@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DAY,rateCard,recallProbability,intervalDays,dailyPlan,replayEvents,chooseNext,localDay,isReviewDue,memoryLevel,dayStart,nextShortTime} from './scheduler.js';
+import {DAY,rateCard,recallProbability,intervalDays,dailyPlan,replayEvents,chooseNext,localDay,isReviewDue,memoryLevel,dayStart,nextShortTime,FIRST_RECALL_DELAY} from './scheduler.js';
 const t=new Date(2026,10,28,10).getTime();
 const p={exam:'2026-12-15',reserve:3,scope:'all'};
 const ev=(id,kind,fields={},at=t)=>({id,kind,at,day:localDay(at),...fields});
@@ -38,7 +38,9 @@ test('introduction does not rate memory; dedup and interleave',()=>{
 test('one-question queue respects short delay then resumes',()=>{
   const state=replayEvents([ev('a','plan',{plan:p}),ev('b','intro',{questionId:'x'})]);
   assert.equal(chooseNext({ids:['x'],state,now:t}),null);
-  assert.deepEqual(chooseNext({ids:['x'],state,now:t+180000}),{id:'x',kind:'recall'});
+  assert.equal(chooseNext({ids:['x'],state,now:t+FIRST_RECALL_DELAY-1}),null);
+  assert.equal(nextShortTime(['x'],state,t),t+FIRST_RECALL_DELAY);
+  assert.deepEqual(chooseNext({ids:['x'],state,now:t+FIRST_RECALL_DELAY}),{id:'x',kind:'recall'});
 });
 
 test('quota catches up on exam day instead of silently discarding unseen cards',()=>{
@@ -84,4 +86,42 @@ test('target retention changes future intervals and scope metrics are independen
   const state=replayEvents(events);
   assert.equal(scopedActivity(['x'],state.byQuestion)[localDay(t)].new,1);
   assert.equal(scopedActivity(['y'],state.byQuestion)[localDay(t)].attempts,0);
+});
+
+test('fast new-card sessions interleave first recall before finishing a ten-card quota',()=>{
+ const ids=Array.from({length:10},(_,i)=>'q'+i);
+ const plan={...p,exam:localDay(t),reserve:0};
+ const events=[ev('plan','plan',{plan})],sequence=[];
+ for(let i=0;i<20;i++){
+   let now=Math.max(t+i*1000,events.at(-1).at+1000);const state=replayEvents(events);
+   let task=chooseNext({ids,state,now});
+   if(!task){assert.equal(dailyPlan(ids,state.cards,plan,now).remainingNew,0);now=Math.max(now,nextShortTime(ids,state,now));task=chooseNext({ids,state,now});}
+   assert.ok(task,'every introduced card eventually receives recall');
+   sequence.push(task);
+   if(task.kind==='intro')events.push(ev('e'+i,'intro',{questionId:task.id},now));
+   else events.push(ev('e'+i,'rate',{questionId:task.id,rating:3},now));
+   const after=replayEvents(events);
+   assert.ok(ids.filter(id=>after.cards[id]&&!after.cards[id].lastReview).length<=3);
+ }
+ assert.deepEqual(sequence.slice(0,6),[
+   {id:'q0',kind:'intro'},{id:'q1',kind:'intro'},{id:'q2',kind:'intro'},
+   {id:'q0',kind:'recall'},{id:'q3',kind:'intro'},{id:'q1',kind:'recall'}
+ ]);
+ assert.equal(sequence.filter(x=>x.kind==='intro').length,10);
+ assert.equal(sequence.filter(x=>x.kind==='recall').length,10);
+});
+test('hard first exposure returns after one other task, slow sessions use time instead',()=>{
+ const ids=['a','b','c','d'],plan={...p,exam:localDay(t)};
+ const events=[ev('p','plan',{plan}),ev('a','intro',{questionId:'a',difficult:true}),ev('b','intro',{questionId:'b'},t+1000)];
+ assert.deepEqual(chooseNext({ids,state:replayEvents(events),now:t+1000}),{id:'a',kind:'recall'});
+ const normal=events.map(x=>x.kind==='intro'?{...x,difficult:false}:x);
+ assert.deepEqual(chooseNext({ids,state:replayEvents(normal),now:t+1000}),{id:'c',kind:'intro'});
+ assert.deepEqual(chooseNext({ids,state:replayEvents(normal),now:t+FIRST_RECALL_DELAY}),{id:'a',kind:'recall'});
+});
+test('failed recall still respects relearning time and daily attempt cap',()=>{
+ const ids=['a','b','c','d'],plan={...p,exam:localDay(t)};
+ const events=[ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),ev('b','intro',{questionId:'b'},t+1000),ev('c','intro',{questionId:'c'},t+2000),ev('r','rate',{questionId:'a',rating:1},t+3000)];
+ const state=replayEvents(events);
+ assert.notEqual(chooseNext({ids,state,now:t+4000})?.id,'a');
+ assert.equal(state.cards.a.due,t+303000);
 });

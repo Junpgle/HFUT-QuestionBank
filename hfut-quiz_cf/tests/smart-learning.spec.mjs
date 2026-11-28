@@ -91,3 +91,16 @@ test('fill and short answer drafts, grading and self assessment',async({page})=>
   await returnPlan(page);
   await expect(page.getByText(/进入复习 1 题/)).toBeVisible();
 });
+
+test('quick introductions return to first recall before all new cards are shown',async({page})=>{
+  await open(page);await plan(page);
+  await button(page,'开始今日学习').click();
+  for(const name of ['测试单选：首题','测试多选：第二题']){
+    await expect(page.getByRole('heading',{name})).toBeVisible();
+    await button(page,'已记忆，继续').click();
+  }
+  await expect(page.getByRole('heading',{name:/测试填空/})).toBeVisible();
+  await button(page,'已记忆，继续').click();
+  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'参考答案'})).toHaveCount(0);
+});

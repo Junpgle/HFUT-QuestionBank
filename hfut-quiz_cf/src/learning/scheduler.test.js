@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DAY,rateCard,recallProbability,intervalDays,dailyPlan,replayEvents,chooseNext,localDay,isReviewDue,memoryLevel,dayStart,nextShortTime,FIRST_RECALL_DELAY} from './scheduler.js';
+import {DAY,rateCard,recallProbability,intervalDays,dailyPlan,replayEvents,chooseNext,localDay,isReviewDue,memoryLevel,dayStart,nextShortTime,FIRST_RECALL_DELAY,questionMemoryStage} from './scheduler.js';
 const t=new Date(2026,10,28,10).getTime();
 const p={exam:'2026-12-15',reserve:3,scope:'all'};
 const ev=(id,kind,fields={},at=t)=>({id,kind,at,day:localDay(at),...fields});
@@ -124,4 +124,18 @@ test('failed recall still respects relearning time and daily attempt cap',()=>{
  const state=replayEvents(events);
  assert.notEqual(chooseNext({ids,state,now:t+4000})?.id,'a');
  assert.equal(state.cards.a.due,t+303000);
+});
+
+test('question memory stages reflect persisted learning, review, maturity and setbacks',()=>{
+ assert.equal(questionMemoryStage(undefined,t).index,0);
+ assert.equal(questionMemoryStage({phase:'learning',firstSeen:t},t).index,1);
+ const card=rateCard({},3,t);
+ assert.equal(questionMemoryStage(card,t).index,2);
+ assert.equal(questionMemoryStage({...card,stability:7},t).index,3);
+ assert.equal(questionMemoryStage({...card,stability:30,successfulDays:2},t).index,3);
+ assert.equal(questionMemoryStage({...card,stability:30,successfulDays:3},t).index,4);
+ assert.equal(questionMemoryStage({...card,stability:30,successfulDays:3},t+100*DAY).index,2);
+ const fail=rateCard(card,1,t+DAY);
+ assert.equal(questionMemoryStage(fail,t+DAY).index,1);
+ assert.equal(questionMemoryStage(fail,t+DAY).label,'重新巩固');
 });

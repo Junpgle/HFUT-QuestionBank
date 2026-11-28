@@ -27,7 +27,7 @@ import {readDraft,writeDraft,validDraft,cardVersion} from '../learning/session';
 import {learningAttempt} from '../learning/attempt';
 import {ignoreQuizShortcut,optionShortcutIndex} from '../utils/quizShortcuts';
 import {gradeFill,parseFillAnswer} from '../utils/fillAnswer';
-import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY} from '../learning/scheduler';
+import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY,questionMemoryStage,MEMORY_STAGES} from '../learning/scheduler';
 import {loadLearning,appendLearning,exchangeLearning,makeLearningEvent,unionEvents,scheduleLearningSync,subscribeLearning,importLearning} from '../learning/store';
 
 const surface='rounded-[1.5rem] md:rounded-[2rem] border border-slate-200/90 bg-white p-4 sm:p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900';
@@ -149,6 +149,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
       <SmartLearningSession
         q={displayQ}
         task={displayTask}
+        card={displayQ?state.cards[displayQ.id]:null}
         plan={plan}
         due={due}
         pending={pending}
@@ -578,7 +579,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 }
 
 function SmartLearningSession({
-  q,task,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,
+  q,task,card,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onExit,onDone,
 }){
@@ -694,6 +695,8 @@ function SmartLearningSession({
                 q={q}
                 task={task}
                 taskMeta={taskMeta}
+                card={card}
+                now={now}
                 busy={busy}
                 answer={answer}
                 isHistory={isHistory}
@@ -730,8 +733,34 @@ function SmartLearningSession({
   );
 }
 
+function QuestionStageProgress({card,now,isHistory}){
+  const stage=questionMemoryStage(card,now);
+  const tone=stage.index===1?'bg-amber-500 dark:bg-amber-400':stage.index>=3?'bg-emerald-500 dark:bg-emerald-400':'bg-indigo-500 dark:bg-indigo-400';
+  return (
+    <section aria-label="单题学习阶段" className="rounded-2xl border border-slate-200 bg-white px-3.5 py-3 sm:px-5 sm:py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-500 dark:text-slate-400">
+          <Brain size={15} aria-hidden="true" className="text-indigo-500"/>
+          {isHistory?'此题最新记忆阶段':'本题记忆阶段'}
+          <span className="text-slate-800 dark:text-slate-100 font-bold">{stage.label}</span>
+        </div>
+        <span className="text-xs font-semibold tabular-nums text-slate-400 dark:text-slate-500">阶段 {stage.index+1} / {MEMORY_STAGES.length}</span>
+      </div>
+      <div role="progressbar" aria-label="本题记忆阶段进度" aria-valuemin={1} aria-valuemax={MEMORY_STAGES.length} aria-valuenow={stage.index+1} aria-valuetext={stage.label} className="grid grid-cols-5 gap-1.5 sm:gap-2 mt-3">
+        {MEMORY_STAGES.map((label,i)=>(
+          <div key={label} className="min-w-0" aria-hidden="true">
+            <div className={'h-1.5 sm:h-2 rounded-full '+(i<=stage.index?tone:'bg-slate-100 dark:bg-slate-800')+(i===stage.index?' ring-2 ring-offset-2 ring-indigo-300 ring-offset-white dark:ring-indigo-700 dark:ring-offset-slate-900':'')}/>
+            <div className={'mt-2 text-center text-[10px] sm:text-xs leading-tight '+(i===stage.index?'font-bold text-slate-900 dark:text-slate-100':'text-slate-400 dark:text-slate-500')}>{label}</div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">{stage.detail}</p>
+    </section>
+  );
+}
+
 function SmartLearningQuestion({
-  q,task,taskMeta,busy,answer,
+  q,task,taskMeta,card,now,busy,answer,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onDone,
 }){
@@ -889,6 +918,7 @@ function SmartLearningQuestion({
 
   return (
     <>
+      <QuestionStageProgress card={card} now={now} isHistory={isHistory}/>
       <div className="flex flex-wrap items-center justify-between gap-2 px-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 text-xs font-bold ${taskMeta.tone}`}>

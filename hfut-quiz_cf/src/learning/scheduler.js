@@ -111,6 +111,17 @@ export function memoryLevel(card,now){
   if(card.stability>=7&&recallProbability(card,now)>=.9)return 'stable';
   return 'learning';
 }
+// A stage is a categorical memory milestone, not a percentage of mastery.
+export const MEMORY_STAGES=['首次学习','短时巩固','间隔复习','稳定记忆','长期记忆'];
+export function questionMemoryStage(card,now){
+  if(!card)return {index:0,label:MEMORY_STAGES[0],detail:'尚未完成首次学习'};
+  if(card.phase==='relearning')return {index:1,label:'重新巩固',detail:'回忆失败后重新建立记忆'};
+  if(card.phase!=='review')return {index:1,label:MEMORY_STAGES[1],detail:card.lastReview?'仍需短时强化':'已学习，等待首次独立回忆'};
+  const level=memoryLevel(card,now);
+  if(level==='long')return {index:4,label:MEMORY_STAGES[4],detail:'已达到长期记忆条件'};
+  if(level==='stable')return {index:3,label:MEMORY_STAGES[3],detail:'当前记忆保持较稳定'};
+  return {index:2,label:MEMORY_STAGES[2],detail:level==='weak'?'记忆已减弱，需及时复习':'已进入跨天间隔复习'};
+}
 const firstRecall=c=>c?.phase==='learning'&&!c.lastReview&&!c.stability;
 const canRetryToday=(c,now)=>c.attemptDay!==localDay(now)||c.attempts<4;
 export function nextShortTime(ids,state,now){

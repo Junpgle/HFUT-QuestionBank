@@ -22,6 +22,7 @@ test('first exposure, mixed queue, multi-select and uncommitted draft survive re
   await button(page,'开始今日学习').click();
   await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
   await expect(page.getByRole('heading',{name:'参考答案'})).toBeVisible();
+  await expect(page.getByRole('progressbar',{name:'本题记忆阶段进度'})).toHaveAttribute('aria-valuenow','1');
   await button(page,'已记忆，继续').click();
   await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();
   await button(page,'已记忆，继续').click();
@@ -103,4 +104,5 @@ test('quick introductions return to first recall before all new cards are shown'
   await button(page,'已记忆，继续').click();
   await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
   await expect(page.getByRole('heading',{name:'参考答案'})).toHaveCount(0);
+  await expect(page.getByRole('progressbar',{name:'本题记忆阶段进度'})).toHaveAttribute('aria-valuenow','2');
 });

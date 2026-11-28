@@ -5,7 +5,7 @@ const validHistory=h=>h&&isOfficial(h.questionId)&&typeof h.timestamp==='string'
 export function normalizeProgress(input={},limit=Infinity){
   input=input||{};
   const out={};
-  for(const k of FIELDS)out[k]=[...new Set(Array.from(input[k]||[]).filter(isOfficial))].sort();
+  for(const k of FIELDS)out[k]=[...new Set(Array.from(Array.isArray(input[k])||input[k] instanceof Set?input[k]:[]).filter(isOfficial))].sort();
   const map=new Map();
   for(const h of Array.isArray(input.history)?input.history:[])if(validHistory(h)&&!map.has(historyKey(h)))map.set(historyKey(h),h);
   out.history=[...map.values()].sort((a,b)=>Date.parse(b.timestamp)-Date.parse(a.timestamp)||historyKey(a).localeCompare(historyKey(b))).slice(0,limit);

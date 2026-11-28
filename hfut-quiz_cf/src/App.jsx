@@ -50,7 +50,7 @@ import {
 } from './config/quizConfig';
 import {formatDate} from './utils/date';
 import {safeGet, safeSet} from './utils/storage';
-import {FIELDS,normalizeProgress,makeJournal,observeJournal,acknowledgeOps,reconcileProgress} from './utils/progressSync';
+import {FIELDS,normalizeProgress,makeJournal,observeJournal,acknowledgeOps,reconcileProgress,coalesceOps,diffProgress,applyOps,mergeJournalWrite} from './utils/progressSync';
 import {normalizeSet, getQuestionSubjectId} from './utils/questionId';
 import {
     normalizeLastSession,
@@ -443,11 +443,19 @@ function App() {
     const lastPullRef=useRef(0);
     const journalKey=uid=>'app_progress_journal_v2:'+uid;
     const currentView=()=>normalizeProgress(latestSyncDataRef.current||{});
-    const persistJournal=j=>{
+    const withJournalLock=(uid,fn)=>navigator.locks?navigator.locks.request('qbank-progress-journal:'+uid,fn):fn();
+    const persistJournal=(j,mode='local',cloud=null,ack=[])=>{
+        const previous=journalRef.current;
         journalRef.current=j;
         progressDirtyRef.current=!!j.pending.length;
         const uid=j.userId;
-        journalWriteRef.current=journalWriteRef.current.catch(()=>{}).then(()=>localforage.setItem(journalKey(uid),j)).catch(err=>{console.error('进度增量本地保存失败',err);setSyncStatus('error');setSyncMsg('本地进度保存失败');});
+        const prior=String(previous?.userId)===String(uid)?previous:null;
+        journalWriteRef.current=journalWriteRef.current.catch(()=>{}).then(()=>withJournalLock(uid,async()=>{
+            const stored=await localforage.getItem(journalKey(uid));
+            const next=mergeJournalWrite(stored,prior,j,mode,cloud,ack);
+            await localforage.setItem(journalKey(uid),next);
+            return next;
+        })).catch(err=>{console.error('进度增量本地保存失败',err);setSyncStatus('error');setSyncMsg('本地进度保存失败');return null;});
         return journalWriteRef.current;
     };
     const applyView=view=>{
@@ -468,6 +476,8 @@ function App() {
     function scheduleProgressSync(){
         clearTimeout(syncTimerRef.current);
         const j=journalRef.current;
+        const snap=latestSyncDataRef.current;
+        if(!snap?.currentUser||!snap.hydrated||snap.apiLimitReached||navigator.onLine===false||String(j?.userId)!==String(snap.currentUser.id))return;
         if(!j?.pending.length&&!statsBuffer.current.length)return;
         const now=Date.now();
         const due=Math.max(syncRetryRef.current,Math.min((j?.dirtySince||now)+300000,(j?.lastChange||now)+30000));
@@ -504,7 +514,9 @@ function App() {
 
     const performGlobalSync = (options={}) => {
         if(globalSyncRef.current)return globalSyncRef.current;
-        const p=runGlobalSync(options).finally(()=>{globalSyncRef.current=null;scheduleProgressSync();});
+        const uid=latestSyncDataRef.current?.currentUser?.id;
+        const work=()=>runGlobalSync(options);
+        const p=(navigator.locks&&uid?navigator.locks.request('qbank-progress-network:'+uid,work):work()).finally(()=>{globalSyncRef.current=null;scheduleProgressSync();});
         globalSyncRef.current=p;
         return p;
     };
@@ -512,11 +524,19 @@ function App() {
         includeProgress=false,includeStats=false,pullProgress=false,checkVersion=false,heartbeat=true,keepalive=false,manual=false
     }={})=>{
         const snapshot=latestSyncDataRef.current;
-        const j=captureProgress();
+        let j=captureProgress();
         if(!snapshot?.currentUser||!snapshot.hydrated||snapshot.apiLimitReached||!j||navigator.onLine===false)return null;
         if(!manual&&Date.now()<syncRetryRef.current)return null;
         const uid=snapshot.currentUser.id;
         if(String(j.userId)!==String(uid))return null;
+        await journalWriteRef.current;
+        const disk=await localforage.getItem(journalKey(uid)).catch(()=>null);
+        if(disk?.view&&Array.isArray(disk.pending)&&String(disk.userId)===String(uid)){
+            const local=captureProgress();
+            const pending=coalesceOps(disk.pending,local.pending.filter(o=>!j.pending.some(x=>x.id===o.id)));
+            j={...disk,view:applyOps(disk.view,pending),pending};
+            journalRef.current=j;progressDirtyRef.current=!!pending.length;applyView(j.view);
+        }
         const ops=includeProgress?j.pending.slice(0,keepalive?100:1500):[];
         const stats=includeStats?statsBuffer.current.slice(0,100):[];
         if(!ops.length&&!stats.length&&!pullProgress&&!checkVersion&&!heartbeat)return null;
@@ -527,9 +547,9 @@ function App() {
             if(ops.length&&!keepalive){setSyncStatus('uploading');setSyncMsg('同步中…');}
             const res=await api.syncAll(payload,keepalive?{keepalive:true}:{});
             if(!res?.success)throw Error('服务器未确认同步');
-            if(payload.progressOps!==null&&(res.progressProtocol!==2||!Array.isArray(res.ack)||ops.some(o=>!res.ack.includes(o.id))))throw Error('普通题库同步协议未更新，请先部署新版后端');
             if(String(api.getCurrentUser()?.id)!==String(uid)||String(journalRef.current?.userId)!==String(uid))return null;
             if(stats.length)statsBuffer.current=statsBuffer.current.filter(s=>!stats.includes(s));
+            if(payload.progressOps!==null&&(res.progressProtocol!==2||!res.progress||!Array.isArray(res.ack)||ops.some(o=>!res.ack.includes(o.id))))throw Error('普通题库同步协议未更新，请先部署新版后端');
             if(res.onlineCount!==undefined)setOnlineCount(res.onlineCount);
             if(heartbeat)lastHeartbeatAtRef.current=Date.now();
             if(payload.progressOps!==null){
@@ -539,7 +559,7 @@ function App() {
                 const next={...latest,view,pending,lastPull:Date.now(),dirtySince:pending.length?latest.dirtySince:0,lastChange:pending.length?latest.lastChange:0};
                 lastPullRef.current=next.lastPull;
                 applyView(view);
-                await persistJournal(next);
+                await persistJournal(next,'remote',res.progress,res.ack);
                 invalidateReportBundleCache();
                 if(!keepalive){setSyncStatus('success');setSyncMsg(pending.length?'已同步，仍有待上传记录':'同步成功');}
             }
@@ -585,12 +605,16 @@ function App() {
         const uid=currentUser.id;
         let cancelled=false;
         setJournalReady(false);
+        const initialLocal=currentView();
         (async()=>{
             let saved=await localforage.getItem(journalKey(uid));
             if(cancelled)return;
             const local=currentView();
-            let j=saved?.view&&Array.isArray(saved.pending)?saved:makeJournal(local);
+            let owner=null;try{owner=localStorage.getItem('qbank_progress_owner');}catch{}
+            let j=saved?.view&&Array.isArray(saved.pending)?saved:makeJournal(owner&&owner!==String(uid)?{}:local);
+            if(saved?.view){const edits=diffProgress(initialLocal,local);j={...j,view:applyOps(j.view,edits),pending:coalesceOps(j.pending,edits)};}
             j={...j,userId:uid};
+            try{localStorage.setItem('qbank_progress_owner',String(uid));}catch{}
             const initial=loginProgressRef.current;
             if(initial&&String(initial.uid)===String(uid)){
                 j.view=reconcileProgress(initial.progress,j.view,j.pending);
@@ -599,7 +623,7 @@ function App() {
             lastPullRef.current=j.lastPull||0;
             // The account journal is the durable source for pending removals and additions after reload.
             applyView(j.view);
-            await persistJournal(j);
+            await persistJournal(j,'init');
             if(cancelled)return;
             setJournalReady(true);
         })().catch(e=>{console.error('进度日志加载失败',e);setSyncStatus('error');setSyncMsg('本地进度日志读取失败');});
@@ -608,7 +632,7 @@ function App() {
     useEffect(()=>{
         if(!currentUser||!hydrated||!journalReady||String(journalRef.current?.userId)!==String(currentUser.id))return;
         const refresh=()=>{
-            if(document.hidden)return;
+            if(document.hidden||navigator.onLine===false)return;
             const dirty=progressDirtyRef.current||statsBuffer.current.length>0;
             const due=Date.now()-lastPullRef.current>=INITIAL_SYNC_COOLDOWN;
             if(dirty||due)performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:true,checkVersion:needsVersionCheck()});
@@ -1972,6 +1996,7 @@ function App() {
             category,
             userAnswer
         });
+        scheduleProgressSync();
         if (statsBuffer.current.length >= BATCH_THRESHOLD) {
             // Let React commit this answer before capturing the pending progress.
             setTimeout(()=>performGlobalSync({includeProgress:true,includeStats:true,pullProgress:true,heartbeat:true}),0);

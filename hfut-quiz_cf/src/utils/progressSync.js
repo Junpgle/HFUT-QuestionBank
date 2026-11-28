@@ -5,7 +5,7 @@ const validHistory=h=>h&&isOfficial(h.questionId)&&typeof h.timestamp==='string'
 export function normalizeProgress(input={},limit=Infinity){
   input=input||{};
   const out={};
-  for(const k of FIELDS)out[k]=[...new Set(Array.from(input[k]||[]).filter(isOfficial))].sort();
+  for(const k of FIELDS)out[k]=[...new Set(Array.from(Array.isArray(input[k])||input[k] instanceof Set?input[k]:[]).filter(isOfficial))].sort();
   const map=new Map();
   for(const h of Array.isArray(input.history)?input.history:[])if(validHistory(h)&&!map.has(historyKey(h)))map.set(historyKey(h),h);
   out.history=[...map.values()].sort((a,b)=>Date.parse(b.timestamp)-Date.parse(a.timestamp)||historyKey(a).localeCompare(historyKey(b))).slice(0,limit);
@@ -55,4 +55,23 @@ export function observeJournal(journal,view){
   const next=normalizeProgress(view),delta=diffProgress(journal.view,next);
   if(!delta.length)return journal;
   return {...journal,view:next,pending:coalesceOps(journal.pending,delta)};
+}
+
+// Persist only newly observed operations, never replace another tab's dirty log.
+// The server response is canonical; preserve all pending operations not acknowledged by ID.
+export function mergeJournalWrite(stored,previous,next,mode='local',cloud=null,ack=[]){
+  if(!stored?.view||!Array.isArray(stored.pending))return next;
+  const oldIds=new Set((previous?.pending||[]).map(o=>o.id));
+  const newOps=next.pending.filter(o=>!oldIds.has(o.id));
+  if(mode==='remote'){
+    const pending=coalesceOps(acknowledgeOps(stored.pending,ack),newOps);
+    return {...stored,...next,pending,view:reconcileProgress(cloud,stored.view,pending)};
+  }
+  if(mode==='init'){
+    // A concurrently opened tab may have already saved a journal during initialization.
+    const pending=coalesceOps(stored.pending,next.pending);
+    return {...stored,...next,pending,view:applyOps(mergeLegacy(stored.view,next.view,Infinity),pending)};
+  }
+  const pending=coalesceOps(stored.pending,newOps);
+  return {...stored,...next,pending,view:applyOps(stored.view,newOps)};
 }

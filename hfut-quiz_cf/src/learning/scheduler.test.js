@@ -287,3 +287,22 @@ test('grid differentiates relearning, daily deferral and ordinary strengthening'
  assert.equal(learningGridStatus(deferred.cards.a,plan,t+4000),'deferred');
  assert.equal(learningGridStatus(deferred.cards.a,plan,t+DAY),'pending');
 });
+
+test('completed cards bridge a short queue instead of blocking reinforcement',()=>{
+ const plan={...p,exam:localDay(t+10*DAY),reserve:0};
+ const events=[ev('p','plan',{plan}),ev('ib','intro',{questionId:'b'}),ev('b1','rate',{questionId:'b',rating:3},t+1000),ev('b2','rate',{questionId:'b',rating:3},t+61000),ev('b3','rate',{questionId:'b',rating:3},t+181000),ev('ia','intro',{questionId:'a'},t+182000),ev('a1','rate',{questionId:'a',rating:3},t+212000)];
+ const state=replayEvents(events),now=t+213000;
+ assert.equal(state.cards.a.strengthCount,1);
+ assert.deepEqual(chooseNext({ids:['a','b'],state,now}),{id:'b',kind:'review',bridge:true});
+ const bridged=replayEvents([...events,ev('br','rate',{questionId:'b',rating:3},now)]);
+ assert.equal(bridged.cards.b.due,state.cards.b.due);
+ assert.deepEqual(chooseNext({ids:['a','b'],state:bridged,now}),{id:'a',kind:'recall'});
+ assert.equal(chooseNext({ids:['a'],state,now}),null);
+ assert.equal(nextShortTime(['a'],state,now),t+272000);
+});
+test('bridge practice never overrides daily deferral or creates unnecessary review',()=>{
+ const plan={...p,exam:localDay(t+10*DAY),reserve:0};
+ const state=replayEvents([ev('p','plan',{plan}),ev('ib','intro',{questionId:'b'}),ev('b1','rate',{questionId:'b',rating:3},t+1000),ev('b2','rate',{questionId:'b',rating:3},t+61000),ev('b3','rate',{questionId:'b',rating:3},t+181000),ev('ia','intro',{questionId:'a'},t+182000),...[1,2,3,4].map(i=>ev('a'+i,'rate',{questionId:'a',rating:1,relearned:true},t+182000+i*1000))]);
+ assert.equal(chooseNext({ids:['a','b'],state,now:t+190000}),null);
+ assert.equal(chooseNext({ids:['b'],state,now:t+190000}),null);
+});

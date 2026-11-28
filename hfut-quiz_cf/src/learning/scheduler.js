@@ -170,7 +170,7 @@ export function nextShortTime(ids,state,now){
   const times=ids.flatMap(id=>{
     const c=state.cards[id];if(!c||c.phase==='review')return [];
     if(!canRetryToday(c,now))return [Math.max(c.due,nextDay(now))];
-    if(firstRecall(c)||c.due>now)return [c.due];
+    if(c.due>now)return [c.due];
     if(c.minRecallAt>now&&!hasStrengthSpacing(c,state.step,state.lastId,id,now))return [c.minRecallAt];
     // Rated short steps are task-based, not waiting for a wall-clock deadline.
     return [];
@@ -225,11 +225,24 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
     return c&&!c.pendingRelearn&&c.phase!=='review'&&!firstRecall(c)&&c.due<=now&&canRetryToday(c,now)&&hasStrengthSpacing(c,step,lastId,id,now);
   }).sort((a,b)=>cards[a].eligibleStep-cards[b].eligibleStep||cards[a].due-cards[b].due);
   if(fallback.length)return {id:fallback[0],kind:'recall'};
+  // On a short queue, a different first-exposure card can be recalled early
+  // after another task, rather than waiting out the full 30 seconds.
+  const earlyIntro=candidates.find(id=>{const c=cards[id];return firstRecall(c)&&canRetryToday(c,now)&&c.eligibleStep>step&&c.eligibleStep-step<FIRST_RECALL_STEPS;});
+  if(earlyIntro)return {id:earlyIntro,kind:'recall'};
   // Single first exposure can still return after its short time delay.
   const introFallback=ids.find(id=>firstRecall(cards[id])&&cards[id].due<=now&&canRetryToday(cards[id],now));
   if(introFallback)return {id:introFallback,kind:'recall'};
   const delayed=ids.find(id=>{const c=cards[id];return c&&c.phase!=='review'&&!c.pendingRelearn&&c.strengthCount>0&&c.minRecallAt>0&&c.minRecallAt<=now&&c.due<=now&&canRetryToday(c,now);});
-  return delayed?{id:delayed,kind:'recall'}:null;
+  if(delayed)return {id:delayed,kind:'recall'};
+  // If spacing is the only obstacle, use a different already-learned card
+  // as a real intervening retrieval task. Do not introduce extra new cards
+  // or repeatedly rehearse the same card in isolation.
+  const pending=ids.filter(id=>{const c=cards[id];return c&&c.phase!=='review'&&canRetryToday(c,now)&&localDay(c.due)<=localDay(now);});
+  if(pending.length){
+    const bridge=ids.filter(id=>id!==lastId&&cards[id]?.phase==='review').sort((a,b)=>recallProbability(cards[a],now)-recallProbability(cards[b],now)||cards[a].lastReview-cards[b].lastReview)[0];
+    if(bridge)return {id:bridge,kind:'review',bridge:true};
+  }
+  return null;
 }
 
 export function scopedActivity(ids,byQuestion){

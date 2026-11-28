@@ -21,7 +21,7 @@ import MemoryReport from './MemoryReport';
 import {Markdown} from './Markdown';
 import {QuizQuestionPanel} from './QuizQuestionPanel';
 import {makeBackup,parseBackup,LIMIT} from '../learning/backup';
-import {readDraft,writeDraft,validDraft,cardVersion} from '../learning/session';
+import {readDraft,writeDraft,validDraft,cardVersion,readShuffleOptions,writeShuffleOptions} from '../learning/session';
 import {learningAttempt} from '../learning/attempt';
 import {ignoreQuizShortcut,optionShortcutIndex} from '../utils/quizShortcuts';
 import {gradeFill,parseFillAnswer} from '../utils/fillAnswer';
@@ -38,6 +38,7 @@ const correctIndices=q=>Array.isArray(q.rawAnswer)?q.rawAnswer.map(Number):typeo
 
 export default function SmartLearning({subject,subjectName,bank,user,wrongIds,brushedIds,onBack,onAttempt}){
   const [data,setData]=useState(null),[now,setNow]=useState(Date.now()),[exam,setExam]=useState(''),[reserve,setReserve]=useState(3),[scope,setScope]=useState('all'),[target,setTarget]=useState(.9);
+  const [shuffleOptions,setShuffleOptions]=useState(()=>readShuffleOptions(user));
   const [editingPlan,setEditingPlan]=useState(false),[showReport,setShowReport]=useState(false),[showBackup,setShowBackup]=useState(false);
   const [active,setActive]=useState(false),[extra,setExtra]=useState(false),[task,setTask]=useState(null),[error,setError]=useState(''),[syncing,setSyncing]=useState(false),[busy,setBusy]=useState(false),[syncMessage,setSyncMessage]=useState('');
   const [history,setHistory]=useState([]),[historyIndex,setHistoryIndex]=useState(null);
@@ -192,6 +193,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         plan={plan}
         due={due}
         pending={pending}
+        shuffleOptions={shuffleOptions}
         todayStrengthened={todayStrengthened}
         shortToday={shortToday}
         completedReviews={completedReviews}
@@ -302,6 +304,14 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
             </div>
           </dl>
         )}
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-xl bg-slate-50/80 dark:bg-slate-800/50 px-3.5 py-3">
+        <div className="min-w-0">
+          <label htmlFor="learning-shuffle-options" className="text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">随机选项顺序</label>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{shuffleOptions?'回忆时调整单选、多选的选项顺序':'保持题库原始选项顺序'}</p>
+        </div>
+        <input id="learning-shuffle-options" type="checkbox" role="switch" checked={shuffleOptions} disabled={locked} onChange={e=>{const enabled=e.target.checked;setShuffleOptions(enabled);if(!writeShuffleOptions(user,enabled))setError('无法保存选项顺序设置，本次学习仍会使用当前设置。');}} className="sr-only peer"/>
+        <label htmlFor="learning-shuffle-options" aria-hidden="true" className="relative shrink-0 cursor-pointer w-11 h-6 rounded-full bg-slate-300 dark:bg-slate-600 peer-checked:bg-indigo-600 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-500 peer-disabled:opacity-50 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:after:translate-x-5"/>
+      </div>
       <div className="flex flex-col gap-2.5 pt-3.5 border-t border-slate-100 dark:border-slate-800">
         {!plan&&(
           <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed [text-wrap:pretty]">
@@ -633,7 +643,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 }
 
 function SmartLearningSession({
-  q,task,card,questionGrid,onSelectGrid,showLearnedGrid,onToggleLearnedGrid,olderLearnedCount,isInspection=false,plan,due,pending,todayStrengthened,shortToday,completedReviews,waitUntil,canEarlyRecall,onEarlyRecall,canExtraNew,onExtraNew,now,busy,error,draftWarning,answer,
+  q,task,card,shuffleOptions=true,questionGrid,onSelectGrid,showLearnedGrid,onToggleLearnedGrid,olderLearnedCount,isInspection=false,plan,due,pending,todayStrengthened,shortToday,completedReviews,waitUntil,canEarlyRecall,onEarlyRecall,canExtraNew,onExtraNew,now,busy,error,draftWarning,answer,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onExit,onDone,
 }){
@@ -739,6 +749,7 @@ function SmartLearningSession({
                 q={q}
                 task={task}
                 card={card}
+                shuffleOptions={shuffleOptions}
                 now={now}
                 busy={busy}
                 answer={answer}
@@ -857,7 +868,7 @@ function QuestionStageProgress({card,now,isHistory,historyPos,relearning=false})
 }
 
 function SmartLearningQuestion({
-  q,task,card,now,busy,answer,isInspection=false,
+  q,task,card,now,busy,answer,shuffleOptions=true,isInspection=false,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onDone,
 }){
@@ -865,12 +876,12 @@ function SmartLearningQuestion({
   const selected=answer.selected||[],inputs=answer.inputs||[],result=answer.result||null;
   const order=useMemo(()=>{
     const original=Array.from({length:q.options?.length||0},(_,i)=>i);
-    if(isHistory||intro||!['single','multiple'].includes(q.type)||original.length<2||[q.question,...q.options].some(x=>/以上[各全都均]|上述|[A-HＡ-Ｈ]\s*(和|与|、|及|项|选项)|选项\s*[A-HＡ-Ｈ]|all of the above|none of the above/i.test(String(x))))return original;
+    if(!shuffleOptions||isHistory||intro||!['single','multiple'].includes(q.type)||original.length<2||[q.question,...q.options].some(x=>/以上[各全都均]|上述|[A-HＡ-Ｈ]\s*(和|与|、|及|项|选项)|选项\s*[A-HＡ-Ｈ]|all of the above|none of the above/i.test(String(x))))return original;
     let seed=Array.from(String(q.id)).reduce((n,c)=>(Math.imul(n,31)+c.charCodeAt(0))>>>0,2166136261);
     for(let i=original.length-1;i>0;i--){seed=(Math.imul(seed,1664525)+1013904223)>>>0;const j=seed%(i+1);[original[i],original[j]]=[original[j],original[i]];}
     const shift=(card?.reps||0)%original.length;
     return [...original.slice(shift),...original.slice(0,shift)];
-  },[q,card?.reps,intro,isHistory]);
+  },[q,card?.reps,intro,isHistory,shuffleOptions]);
   const shuffledQ=useMemo(()=>['single','multiple'].includes(q.type)?{...q,options:order.map(i=>q.options[i]),rawAnswer:order.flatMap((i,k)=>correctIndices(q).includes(i)?[k]:[])}:q,[q,order]);
   const relearning=!isHistory&&(task.kind==='relearn'||(!intro&&answer.relearning===true));
   const show=isHistory||intro||relearning||result!==null;

@@ -229,3 +229,28 @@ test('legacy one-success card is demoted and shows remaining reinforcement',asyn
  await returnPlan(page);
  await expect(page.getByText(/进入复习 1 题/)).toBeVisible();
 });
+
+test('option shuffle preference can be disabled and persists without resetting progress',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await open(page);await plan(page);
+ const toggle=page.getByRole('switch',{name:'随机选项顺序'});
+ await expect(toggle).toBeChecked();
+ await page.locator('label[for="learning-shuffle-options"]').last().click();
+ await expect(toggle).not.toBeChecked();
+ await button(page,'开始今日学习').click();
+ await button(page,'已记忆，继续').click();
+ await returnPlan(page);
+ await page.reload();
+ await expect(toggle).not.toBeChecked();
+ await selectCard(page,1);
+ const opts=page.getByRole('button',{name:/正确选项甲|错误选项乙/});
+ await expect(opts.nth(0)).toContainText('正确选项甲');
+ await expect(opts.nth(1)).toContainText('错误选项乙');
+ await page.keyboard.press('1');
+ await expect(page.getByRole('status').filter({hasText:'回答正确'})).toBeVisible();
+ await button(page,'记得').click();
+ await returnPlan(page);
+ await expect(toggle).not.toBeChecked();
+ await page.locator('label[for="learning-shuffle-options"]').last().click();
+ await page.reload();
+ await expect(toggle).toBeChecked();
+});

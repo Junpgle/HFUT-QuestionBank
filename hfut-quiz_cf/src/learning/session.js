@@ -12,3 +12,12 @@ export function validDraft(draft,ids,cards,plan){
   if(a!==undefined&&(!a||typeof a!=='object'||Array.isArray(a)||a.selected!==undefined&&(!Array.isArray(a.selected)||!a.selected.every(Number.isInteger))||a.inputs!==undefined&&(!Array.isArray(a.inputs)||!a.inputs.every(x=>x===null||typeof x==='string'))||a.text!==undefined&&typeof a.text!=='string'||a.relearning!==undefined&&typeof a.relearning!=='boolean'||a.result!==undefined&&![null,'correct','wrong','forgot','self','hint'].includes(a.result)))return false;
   return !!draft&&!!plan&&draft.exam===plan.exam&&draft.scope===plan.scope&&ids.includes(draft.task?.id)&&['intro','recall','review','relearn'].includes(draft.task.kind)&&draft.version===cardVersion(cards[draft.task.id])&&(!cards[draft.task.id]?.pendingRelearn||draft.task.kind==='relearn'||a?.result!=null);
 }
+
+// Presentation preference is independent of the memory schedule and draft answer indices.
+const shuffleKey=user=>'qbank:learning-shuffle-options:v1:'+String(user?.id??'guest');
+export function readShuffleOptions(user){
+  try{return localStorage.getItem(shuffleKey(user))!=='off';}catch{return true;}
+}
+export function writeShuffleOptions(user,enabled){
+  try{localStorage.setItem(shuffleKey(user),enabled?'on':'off');return true;}catch{return false;}
+}

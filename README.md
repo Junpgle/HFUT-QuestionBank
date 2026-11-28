@@ -152,3 +152,6 @@ npm run deploy   # 部署至 Cloudflare Workers
 部署前先应用 D1 迁移 `hfut-backend/migrations/0001_smart_learning.sql`（先备份数据库），再部署 Worker 和前端。算法测试：`cd hfut-quiz_cf && node --test src/learning/scheduler.test.js`。本地记录不应因同步失败而删除。
 
 智能学习支持按科目导出/合并 JSON 备份、未提交答题草稿恢复、独立移动端答题布局。同步接口禁止 PWA 缓存，返回用户 ID 用于客户端校验；正式上线时必须先部署新 Worker。长期记忆要求至少三个独立成功学习日。
+
+### 智能学习低频同步
+本地即时保存；30 秒无新增、首条未同步事件满 5 分钟、累计 50 条、退出/页面隐藏且有待同步记录时触发。进入页面拉取冷却 5 分钟，无变化不轮询；失败退避 30 秒起、最长 30 分钟。`POST /api/learning/exchange` 一次上传最多 50 条并增量拉取最多 200 条，旧 GET/POST 接口保留，404/405 时暂时兼容回退。关闭页面的 keepalive 上传为尽力而为，本地事件仅在确认后标记已同步。新接口无需新增 D1 迁移，需先部署 Worker。

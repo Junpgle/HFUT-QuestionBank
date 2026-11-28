@@ -3,6 +3,8 @@ import { api } from '../api';
 import { localDay,replayEvents } from './scheduler';
 import {mergeBackup} from './backup';
 import {cardVersion} from './session';
+import {nextSyncAt,shouldSync,retryDelay} from './sync-policy';
+import {exchangePages} from './sync-transport';
 const db=localforage.createInstance({name:'qbank-smart-learning',storeName:'learning_v1'});
 const key=(user,subject)=>String(user?.id??'guest')+':'+subject;
 const queues=new Map(), exchanges=new Map(), subscribers=new Map();
@@ -51,37 +53,76 @@ export function appendLearning(user,subject,e,expected=null){
 function checkAccount(user){
   if(String(api.getCurrentUser()?.id)!==String(user.id))throw Error('账号已切换，请重新同步');
 }
-export function exchangeLearning(user,subject){
+const timers=new Map(),known=new Map();
+let legacyUntil=0;
+function remember(user,subject){if(user&&!subject.startsWith('custom_'))known.set(key(user,subject),{user,subject});}
+function clearTimer(k){if(timers.has(k)){clearTimeout(timers.get(k));timers.delete(k);}}
+function online(){return globalThis.navigator?.onLine!==false;}
+export function exchangeLearning(user,subject,reason='manual'){
+  if(!user||subject.startsWith('custom_'))return loadLearning(user,subject);
+  remember(user,subject);
   const k=key(user,subject);
   if(exchanges.has(k))return exchanges.get(k);
-  const p=performExchange(user,subject).finally(()=>exchanges.delete(k));exchanges.set(k,p);return p;
+  const run=()=>performExchange(user,subject,reason);
+  // Distinct lock from local writes: only one tab performs network exchange at once.
+  const work=globalThis.navigator?.locks?navigator.locks.request('qbank-learning-network:'+k,run):run();
+  const p=work.finally(()=>{exchanges.delete(k);scheduleLearningSync(user,subject).catch(()=>{});});
+  exchanges.set(k,p);return p;
 }
-async function performExchange(user,subject){
-  if(!user||subject.startsWith('custom_'))return loadLearning(user,subject);
+async function performExchange(user,subject,reason){
+  const k=key(user,subject);
   checkAccount(user);
   const snapshot=await loadLearning(user,subject);
-  let cursor=snapshot.cursor||0;
-  const pending=snapshot.events.filter(e=>!e.synced);
-  const ack=[];
-  for(let i=0;i<pending.length;i+=50){
-    checkAccount(user);
-    const batch=pending.slice(i,i+50);
-    const res=await api.request('/learning/events','POST',{subject,events:batch.map(e=>{const copy={...e};delete copy.synced;return copy;})});
-    if(!res?.success||String(res.userId)!==String(user.id))throw new Error('学习记录上传未确认');
-    ack.push(...batch.map(e=>({...e,synced:true})));
+  if(!online()||!shouldSync(snapshot,reason,Date.now()))return snapshot;
+  clearTimer(k);
+  let result=snapshot;
+  const request=async(...args)=>{checkAccount(user);const r=await api.request(...args);checkAccount(user);return r;};
+  try{
+    await exchangePages({
+      data:snapshot,subject,uid:user.id,request,legacy:Date.now()<legacyUntil,
+      onLegacy:()=>{legacyUntil=Date.now()+5*60000;},
+      keepalive:reason==='hidden',
+      checkpoint:async({ack,remote,cursor,more,complete})=>{
+        checkAccount(user);
+        result=await updateLearning(user,subject,old=>({...old,
+          events:unionEvents(old.events,ack.map(e=>({...e,synced:true})),remote.map(e=>({...e,synced:true}))),
+          cursor:Math.max(old.cursor||0,cursor),hasMore:more,
+          ...(complete?{lastSyncAt:Date.now(),retryAt:0,syncFailures:0,syncError:null}:{})
+        }));
+      }
+    });
+    return result;
+  }catch(err){
+    if(String(api.getCurrentUser()?.id)===String(user.id)){
+      await updateLearning(user,subject,old=>{const n=(old.syncFailures||0)+1;return {...old,syncFailures:n,retryAt:Date.now()+retryDelay(n),syncError:'云同步暂不可用，本地记录仍保留。'};});
+    }
+    throw err;
   }
-  const remote=[];
-  for(let page=0;page<100;page++){
-    checkAccount(user);
-    const res=await api.request('/learning/events?subject='+encodeURIComponent(subject)+'&after='+cursor);
-    if(!res?.success||String(res.userId)!==String(user.id)||!Array.isArray(res.events)||!Number.isSafeInteger(res.cursor)||res.cursor<cursor)throw new Error('学习记录下载未确认');
-    remote.push(...res.events.map(e=>({...e,synced:true})));
-    cursor=res.cursor;
-    if(!res.more)break;
+}
+// No network polling: only pending events arm a one-shot timer.
+export async function scheduleLearningSync(user,subject){
+  if(!user||subject.startsWith('custom_'))return;
+  remember(user,subject);
+  const k=key(user,subject);
+  const data=await loadLearning(user,subject);
+  clearTimer(k);
+  if(!online()||exchanges.has(k)||String(api.getCurrentUser()?.id)!==String(user.id))return;
+  const due=nextSyncAt(data,Date.now());
+  if(due===null)return;
+  timers.set(k,setTimeout(()=>{
+    timers.delete(k);
+    exchangeLearning(user,subject,'timer').catch(e=>console.warn('智能学习同步延后',e));
+  },Math.max(0,due-Date.now())));
+}
+function flushKnown(reason){
+  for(const {user,subject} of known.values())if(String(api.getCurrentUser()?.id)===String(user.id)){
+    exchangeLearning(user,subject,reason).catch(()=>{});
   }
-  checkAccount(user);
-  // Re-read under lock: network response must not overwrite answers written by another tab.
-  return updateLearning(user,subject,old=>({...old,events:unionEvents(old.events,ack,remote),cursor:Math.max(old.cursor||0,cursor)}));
+}
+if(typeof window!=='undefined'){
+  window.addEventListener('online',()=>flushKnown('online'));
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flushKnown('hidden');});
+  window.addEventListener('pagehide',()=>flushKnown('hidden'));
 }
 // Ordinary practice can strengthen an enrolled card, but never invent historical ratings.
 export async function recordPractice(user,subject,questionId,isCorrect,usedHint=false){
@@ -96,25 +137,12 @@ export async function recordPractice(user,subject,questionId,isCorrect,usedHint=
     changed=true;
     return {...old,events:unionEvents(old.events,[makeLearningEvent('rate',{questionId,rating,source:'practice'},at)])};
   });
-  if(changed&&user&&!subject.startsWith('custom_'))scheduleLearningSync(user,subject);
+  if(changed&&user&&!subject.startsWith('custom_'))scheduleLearningSync(user,subject).catch(()=>{});
   return changed?next:null;
-}
-
-// One timer per subject/account; no request per answer. Offline failures retain pending events.
-const timers=new Map();
-export function scheduleLearningSync(user,subject){
-  if(!user||subject.startsWith('custom_'))return;
-  const k=key(user,subject);
-  if(timers.has(k))return;
-  const timer=setTimeout(()=>{
-    timers.delete(k);
-    exchangeLearning(user,subject).catch(e=>console.warn('智能学习同步延后',e));
-  },15000);
-  timers.set(k,timer);
 }
 
 export async function importLearning(user,subject,events){
   const next=await updateLearning(user,subject,old=>({...old,events:mergeBackup(old.events,events)}));
-  scheduleLearningSync(user,subject);
+  scheduleLearningSync(user,subject).catch(()=>{});
   return next;
 }

@@ -57,7 +57,9 @@ export const api = {
         data = JSON.parse(responseText);
       } catch {
         if (!res.ok) {
-          throw new Error(`[${res.status}] ${responseText || '服务器路径不存在'}`);
+          const err = new Error(`[${res.status}] ${responseText || '服务器路径不存在'}`);
+          err.status = res.status;
+          throw err;
         }
         return responseText;
       }

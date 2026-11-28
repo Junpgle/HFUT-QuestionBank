@@ -8,13 +8,13 @@ function fixture(){
   sqlite.exec('CREATE TABLE Users(id INTEGER PRIMARY KEY); INSERT INTO Users VALUES(1),(2);');
   sqlite.exec(readFileSync(new URL('../migrations/0001_smart_learning.sql',import.meta.url),'utf8'));
   const db={
-    prepare(sql){return {bind(...args){return {run:()=>sqlite.prepare(sql).run(...args),all:()=>({results:sqlite.prepare(sql).all(...args)})};}};},
-    async batch(stmts){sqlite.exec('BEGIN');try{for(const s of stmts)s.run();sqlite.exec('COMMIT');}catch(e){sqlite.exec('ROLLBACK');throw e;}}
+    prepare(sql){return {bind(...args){return {run:()=>sql.startsWith('SELECT')?{results:sqlite.prepare(sql).all(...args)}:sqlite.prepare(sql).run(...args),all:()=>({results:sqlite.prepare(sql).all(...args)})};}};},
+    async batch(stmts){sqlite.exec('BEGIN');try{const result=stmts.map(s=>s.run());sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}
   };
-  let post,get;
-  registerLearningRoutes({post:(_p,h)=>post=h,get:(_p,h)=>get=h});
+  let post,get,exchange;
+  registerLearningRoutes({post:(p,h)=>{if(p.endsWith('/exchange'))exchange=h;else post=h;},get:(_p,h)=>get=h});
   const call=(handler,uid,body,query={})=>handler({env:{DB:db},get:()=>({id:uid}),req:{text:async()=>JSON.stringify(body),query:k=>query[k]},header:()=>{},json:(body,status=200)=>({status,body})});
-  return {post:(uid,subject,events)=>call(post,uid,{subject,events}),get:(uid,subject,after=0)=>call(get,uid,null,{subject,after:String(after)}),sqlite};
+  return {exchange:(uid,subject,after,events)=>call(exchange,uid,{subject,after,events}),post:(uid,subject,events)=>call(post,uid,{subject,events}),get:(uid,subject,after=0)=>call(get,uid,null,{subject,after:String(after)}),sqlite};
 }
 const stamp=Date.parse('2026-01-01T00:00:00Z');
 const event=(n,fields={})=>({id:'00000000-0000-4000-8000-'+String(n).padStart(12,'0'),kind:'intro',questionId:'MG-'+n,at:stamp,day:'2026-01-01',...fields});
@@ -52,5 +52,28 @@ test('pagination returns every event without duplication',async()=>{
   const second=await f.get(1,'maogai',first.body.cursor);
   assert.equal(second.body.events.length,50);assert.equal(second.body.more,false);
   assert.equal(new Set([...first.body.events,...second.body.events].map(e=>e.id)).size,250);
+  f.sqlite.close();
+});
+
+test('combined exchange uploads 50 events and pulls delta in the same request',async()=>{
+  const f=fixture();const events=Array.from({length:50},(_,i)=>event(i+1));
+  const res=await f.exchange(1,'maogai',0,events);
+  assert.equal(res.status,200);assert.equal(res.body.ack.length,50);assert.equal(res.body.events.length,50);
+  assert.equal(res.body.userId,1);
+  const again=await f.exchange(1,'maogai',res.body.cursor,events);
+  assert.equal(again.body.ack.length,50);assert.equal(again.body.events.length,0);
+  const other=await f.exchange(2,'maogai',0,[]);assert.equal(other.body.events.length,0);
+  const invalid=await f.exchange(1,'maogai',0,[event(51),event(52,{questionId:'RELICS-2'})]);assert.equal(invalid.status,400);
+  assert.equal((await f.exchange(1,'maogai',res.body.cursor,[])).body.events.length,0);
+  f.sqlite.close();
+});
+test('combined pagination never skips remote rows when uploads are interleaved',async()=>{
+  const f=fixture();
+  for(let i=0;i<5;i++)await f.post(1,'maogai',Array.from({length:50},(_,j)=>event(i*50+j+1)));
+  const first=await f.exchange(1,'maogai',0,[event(251)]);
+  assert.equal(first.body.events.length,200);assert.equal(first.body.more,true);assert.equal(first.body.ack.length,1);
+  const second=await f.exchange(1,'maogai',first.body.cursor,[]);
+  assert.equal(second.body.events.length,51);assert.equal(second.body.more,false);
+  assert.equal(new Set([...first.body.events,...second.body.events].map(e=>e.id)).size,251);
   f.sqlite.close();
 });

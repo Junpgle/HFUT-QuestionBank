@@ -1,3 +1,4 @@
+import {mergeUserProgress,validateOps} from './progress-merge.js';
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { sign, verify } from 'hono/jwt'
@@ -225,6 +226,7 @@ app.post('/api/sync-all', async (c) => {
     const user = c.get('user');
     const {
       progress = null,
+      progressOps = null,
       heartbeat = true,
       stats = null,
       pullProgress = false,
@@ -233,24 +235,13 @@ app.post('/api/sync-all', async (c) => {
     const now = new Date().toISOString();
     const writeTasks = [];
 
-    if (progress) {
-      writeTasks.push(c.env.DB.prepare(`
-        INSERT INTO UserProgress (user_id, brushed_ids, memorized_ids, mastered_ids, wrong_ids, favorite_ids, history, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET 
-          brushed_ids=excluded.brushed_ids, memorized_ids=excluded.memorized_ids, 
-          mastered_ids=excluded.mastered_ids, wrong_ids=excluded.wrong_ids, 
-          favorite_ids=excluded.favorite_ids, history=excluded.history, updated_at=excluded.updated_at
-      `).bind(
-        user.id,
-        JSON.stringify(progress.brushedIds || []),
-        JSON.stringify(progress.memorizedIds || []),
-        JSON.stringify(progress.masteredIds || []),
-        JSON.stringify(progress.wrongIds || []),
-        JSON.stringify(progress.favoriteIds || []),
-        JSON.stringify(progress.history || []),
-        now
-      ));
+    let mergedProgress=null,validatedOps=null;
+    if(progressOps!==null){
+      try{validatedOps=validateOps(progressOps);}catch(e){return c.json({error:e.message},400);}
+      mergedProgress=await mergeUserProgress(c.env.DB,user.id,{ops:validatedOps});
+    }else if(progress){
+      // Old clients do not provide explicit removals. Never overwrite the account with a stale snapshot.
+      mergedProgress=await mergeUserProgress(c.env.DB,user.id,{legacy:progress});
     }
 
     const statsStatements = buildStatsStatements(c.env.DB, stats);
@@ -270,7 +261,7 @@ app.post('/api/sync-all', async (c) => {
     const readTasks = [
       c.env.DB.prepare('SELECT count(*) as count FROM UserPresence WHERE last_seen > ?').bind(threshold)
     ];
-    if (pullProgress) {
+    if (pullProgress && mergedProgress===null) {
       readTasks.push(c.env.DB.prepare('SELECT * FROM UserProgress WHERE user_id = ?').bind(user.id));
     }
     if (checkVersion) {
@@ -285,7 +276,9 @@ app.post('/api/sync-all', async (c) => {
       onlineCount: onlineRow?.count || 0
     };
 
-    if (pullProgress) {
+    if (mergedProgress!==null) responsePayload.progress=mergedProgress;
+    if (validatedOps!==null){responsePayload.progressProtocol=2;responsePayload.ack=validatedOps.map(o=>o.id);}
+    if (pullProgress && mergedProgress===null) {
       const progressRow = readResults[idx++]?.results?.[0];
       responsePayload.progress = formatProgressRow(progressRow);
     }
@@ -295,6 +288,7 @@ app.post('/api/sync-all', async (c) => {
       responsePayload.appVersion = versionRow ? { success: true, ...versionRow } : null;
     }
 
+    c.header('Cache-Control','no-store');
     return c.json(responsePayload);
   } catch (e) {
     return c.json({ error: e.message }, 500);
@@ -890,6 +884,7 @@ app.get('/api/onlineCount', async (c) => {
 });
 
 app.get('/api/userProgress', async (c) => {
+  c.header('Cache-Control','no-store');
   const user = c.get('user');
   const res = await c.env.DB.prepare('SELECT * FROM UserProgress WHERE user_id = ?').bind(user.id).first();
   if (!res) return c.json({ found: false });
@@ -900,14 +895,13 @@ app.get('/api/userProgress', async (c) => {
 });
 
 app.post('/api/secureSync', async (c) => {
-  const user = c.get('user');
-  const d = await c.req.json();
-  await c.env.DB.prepare(`
-    INSERT INTO UserProgress (user_id, brushed_ids, memorized_ids, mastered_ids, wrong_ids, favorite_ids, history, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET brushed_ids=excluded.brushed_ids, memorized_ids=excluded.memorized_ids, mastered_ids=excluded.mastered_ids, wrong_ids=excluded.wrong_ids, favorite_ids=excluded.favorite_ids, history=excluded.history, updated_at=excluded.updated_at
-  `).bind(user.id, JSON.stringify(d.brushedIds||[]), JSON.stringify(d.memorizedIds||[]), JSON.stringify(d.masteredIds||[]), JSON.stringify(d.wrongIds||[]), JSON.stringify(d.favoriteIds||[]), JSON.stringify(d.history||[]), new Date().toISOString()).run();
-  return c.json({ success: true });
+  try{
+    const user=c.get('user');
+    const d=await c.req.json();
+    const progress=await mergeUserProgress(c.env.DB,user.id,{legacy:d});
+    c.header('Cache-Control','no-store');
+    return c.json({success:true,progress});
+  }catch(e){return c.json({error:e.message},500);}
 });
 
 app.post('/api/recoverOutageStats', async (c) => c.json({ success: true }));

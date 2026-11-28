@@ -805,15 +805,15 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onTog
     });
     return ()=>cancelAnimationFrame(frame);
   },[currentId,currentIndex,showLearned]);
-  // Use the same high-contrast state colors in both the grid and its legend.
-  // The blue selection ring is independent of learning status.
+  // State tints follow the existing Qbank palette. Reinforcement is a separate
+  // bottom-up liquid level; the selection ring never obscures it.
   const styles={
-    new:{label:'未学习',tone:'bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600',swatch:'bg-slate-300 dark:bg-slate-600'},
-    pending:{label:'待巩固',tone:'bg-amber-400 text-amber-950 border-amber-500 dark:bg-amber-500 dark:text-amber-950 dark:border-amber-400',swatch:'bg-amber-400 dark:bg-amber-500'},
-    relearn:{label:'待重新学习',tone:'bg-rose-600 text-white border-rose-700 dark:bg-rose-500 dark:text-slate-950 dark:border-rose-400',swatch:'bg-rose-600 dark:bg-rose-500'},
-    due:{label:'待复习',tone:'bg-violet-600 text-white border-violet-700 dark:bg-violet-400 dark:text-violet-950 dark:border-violet-300',swatch:'bg-violet-600 dark:bg-violet-400'},
-    complete:{label:'已完成',tone:'bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-400 dark:text-emerald-950 dark:border-emerald-300',swatch:'bg-emerald-600 dark:bg-emerald-400'},
-    deferred:{label:'次日继续',tone:'bg-slate-100 text-slate-700 border-slate-500 border-dashed dark:bg-slate-800 dark:text-slate-200 dark:border-slate-400',swatch:'bg-slate-100 border border-dashed border-slate-500 dark:bg-slate-800 dark:border-slate-400'}
+    new:{label:'未学习',tone:'bg-slate-50 text-slate-400 border-slate-200 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-700',fill:'bg-slate-200 dark:bg-slate-700',swatch:'bg-slate-50 border-slate-200 dark:bg-slate-900 dark:border-slate-700'},
+    pending:{label:'待巩固',tone:'bg-blue-50/40 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-200 dark:border-blue-800',fill:'bg-blue-200 dark:bg-blue-800/80',swatch:'bg-blue-200 border-blue-200 dark:bg-blue-800 dark:border-blue-800'},
+    relearn:{label:'待重新学习',tone:'bg-rose-50/60 text-rose-700 border-rose-300 dark:bg-rose-950/25 dark:text-rose-300 dark:border-rose-800',fill:'bg-rose-200 dark:bg-rose-900',swatch:'bg-rose-50 border-rose-300 dark:bg-rose-950/30 dark:border-rose-800'},
+    due:{label:'待复习',tone:'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800',fill:'bg-indigo-100 dark:bg-indigo-900/60',swatch:'bg-indigo-100 border-indigo-200 dark:bg-indigo-900/60 dark:border-indigo-800'},
+    complete:{label:'已完成',tone:'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800',fill:'bg-emerald-100 dark:bg-emerald-900/60',swatch:'bg-emerald-100 border-emerald-200 dark:bg-emerald-900/60 dark:border-emerald-800'},
+    deferred:{label:'次日继续',tone:'bg-slate-50 text-slate-600 border-slate-400 border-dashed dark:bg-slate-900 dark:text-slate-300 dark:border-slate-500',fill:'bg-slate-200 dark:bg-slate-700',swatch:'bg-slate-50 border-slate-400 border-dashed dark:bg-slate-900 dark:border-slate-500'}
   };
   return (
     <section aria-label="今日学习题号" className="flex flex-col flex-1 min-h-0 gap-2.5 overflow-hidden">
@@ -826,16 +826,18 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onTog
           const current=id===currentId;
           const style=styles[status];
           const progress=status==='pending'||status==='relearn'||status==='deferred';
-          const accessible='第 '+(i+1)+' 题 · '+(current?'当前查看 · ':'')+style.label+(progress?' · 强化 '+strength+'/'+REQUIRED_STRENGTHENING:'');
+          const count=status==='complete'||status==='due'?REQUIRED_STRENGTHENING:status==='new'||status==='relearn'?0:Math.max(0,Math.min(REQUIRED_STRENGTHENING,strength||0));
+          const accessible='第 '+(i+1)+' 题 · '+(current?'当前查看 · ':'')+style.label+(progress?' · 强化 '+count+'/'+REQUIRED_STRENGTHENING:'');
           return (
             <button key={id} ref={current?currentRef:null} type="button" aria-label={accessible} aria-current={current?'true':undefined}
-              data-learning-status={status} title={accessible+(available?'（点击查看）':'（由智能学习安排）')}
+              data-learning-status={status} data-strength={count} title={accessible+(available?'（点击查看）':'（由智能学习安排）')}
               disabled={busy||!available} onClick={()=>onSelect(id)}
-              className={'aspect-square min-w-0 rounded-lg border text-sm font-bold flex flex-col items-center justify-center leading-none gap-1 transition-all disabled:cursor-default '+style.tone+(current?' ring-2 ring-blue-600 ring-offset-1 ring-offset-white dark:ring-blue-400 dark:ring-offset-slate-900 shadow-sm':'')}>
-              <span className="tabular-nums">{i+1}</span>
-              {progress&&<span aria-hidden="true" className="text-[9px] font-semibold tabular-nums opacity-90">{strength}/{REQUIRED_STRENGTHENING}</span>}
-              {status==='complete'&&<CheckCircle2 aria-hidden="true" size={10}/>}
-              {status==='due'&&<Clock aria-hidden="true" size={10}/>}
+              className={'relative overflow-hidden isolate aspect-square min-w-0 rounded-lg border text-sm font-bold flex items-center justify-center leading-none transition-colors disabled:cursor-default '+style.tone+(current?' ring-2 ring-blue-600 ring-offset-1 ring-offset-white dark:ring-blue-400 dark:ring-offset-slate-900 shadow-sm':'')}>
+              <span aria-hidden="true" data-testid="learning-strength-fill" className={'pointer-events-none absolute inset-x-0 bottom-0 transition-[height] duration-300 ease-out motion-reduce:transition-none '+style.fill} style={{height:(100*count/REQUIRED_STRENGTHENING)+'%'}}/>
+              <span className="relative z-10 tabular-nums">{i+1}</span>
+              {status==='complete'&&<CheckCircle2 className="absolute z-10 bottom-0.5 right-0.5" aria-hidden="true" size={10}/>}
+              {(status==='due'||status==='deferred')&&<Clock className="absolute z-10 bottom-0.5 right-0.5" aria-hidden="true" size={10}/>}
+              {status==='relearn'&&<RotateCcw className="absolute z-10 bottom-0.5 right-0.5" aria-hidden="true" size={10}/>}
             </button>
           );
         })}
@@ -843,10 +845,10 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onTog
       </div>
       <div aria-label="题目状态图例" className="shrink-0 grid grid-cols-2 gap-x-2 gap-y-1 px-1 text-[11px] text-slate-600 dark:text-slate-300">
         {['new','pending','relearn','due','complete','deferred'].map(status=>(
-          <span key={status} className="inline-flex items-center gap-1.5"><span className={'w-2.5 h-2.5 shrink-0 rounded-sm '+styles[status].swatch} aria-hidden="true"/>{styles[status].label}</span>
+          <span key={status} className="inline-flex items-center gap-1.5"><span className={'w-2.5 h-2.5 shrink-0 rounded-sm border '+styles[status].swatch} aria-hidden="true"/>{styles[status].label}</span>
         ))}
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 shrink-0 rounded-sm ring-1 ring-blue-600 dark:ring-blue-400" aria-hidden="true"/>当前查看</span>
-        <span className="text-[10px] tabular-nums">0/3 · 强化次数</span>
+        <span className="inline-flex items-center gap-1.5"><span className="relative w-2.5 h-2.5 shrink-0 overflow-hidden rounded-sm border border-blue-200 dark:border-blue-800" aria-hidden="true"><span className="absolute inset-x-0 bottom-0 h-2/3 bg-blue-200 dark:bg-blue-800"/></span>液位 · 强化进度</span>
       </div>
       {olderCount>0&&<button type="button" onClick={onToggleLearned} aria-expanded={showLearned} className="shrink-0 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:border-slate-700 dark:text-blue-400 dark:hover:bg-slate-800">{showLearned?'仅显示今日题目':'查看此前已学题目（'+olderCount+'）'}</button>}
       <p className="shrink-0 px-1 text-[10px] text-slate-400 dark:text-slate-500">已学题可点击查看，未学题由智能学习安排。</p>

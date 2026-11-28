@@ -139,9 +139,10 @@ test('desktop daily question grid highlights current question and revisits histo
  await grid.getByRole('button',{name:/第 1 题 · 待巩固/}).click();
  const inspected=grid.getByRole('button',{name:/第 1 题 · 当前查看 · 待巩固/});
  await expect(inspected).toHaveAttribute('data-learning-status','pending');
- await expect(inspected).toContainText('0/3');
+ await expect(inspected).toHaveAttribute('data-strength','0');
+ await expect(inspected.getByTestId('learning-strength-fill')).toHaveCSS('height','0px');
  await expect(inspected).toHaveClass(/ring-blue-600/);
- await expect(inspected).toHaveClass(/bg-amber-400/);
+ await expect(inspected).toHaveClass(/border-blue-200/);
  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
  await grid.getByRole('button',{name:/第 2 题 · 未学习/}).click();
  await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();
@@ -219,6 +220,10 @@ test('legacy one-success card is demoted and shows remaining reinforcement',asyn
  await button(page,'开始今日学习').click();
  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
  await expect(page.getByLabel('短时强化 1/3')).toBeVisible();
+ const grid=page.getByRole('region',{name:'今日学习题号'});
+ const first=grid.getByRole('button',{name:/第 1 题 · 当前查看 · 待巩固/});
+ await expect(first).toHaveAttribute('data-strength','1');
+ await expect(first.getByTestId('learning-strength-fill')).toHaveAttribute('style',/height: 33\.33/);
  const orderBefore=await page.getByRole('button',{name:/正确选项甲|错误选项乙/}).allTextContents();
  await page.getByRole('button',{name:/正确选项甲/}).click();
  await button(page,'很熟悉').click();
@@ -228,6 +233,8 @@ test('legacy one-success card is demoted and shows remaining reinforcement',asyn
  await page.clock.runFor(125000);
  await selectCard(page,1);
  await expect(page.getByLabel('短时强化 2/3')).toBeVisible();
+ await expect(first).toHaveAttribute('data-strength','2');
+ await expect(first.getByTestId('learning-strength-fill')).toHaveAttribute('style',/height: 66\.66/);
  expect(await page.getByRole('button',{name:/正确选项甲|错误选项乙/}).allTextContents()).not.toEqual(orderBefore);
  await page.getByRole('button',{name:/正确选项甲/}).click();
  await button(page,'记得').click();

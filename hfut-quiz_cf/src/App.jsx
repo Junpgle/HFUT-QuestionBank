@@ -1,7 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-/*
-* version: 5.2.6 (Cloudflare Migration)
-* */
 import {useState, useEffect, useLayoutEffect, useRef, useMemo} from 'react';
 import {flushSync} from 'react-dom';
 import {api} from './api';

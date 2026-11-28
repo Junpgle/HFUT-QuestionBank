@@ -154,3 +154,31 @@ test('learned grid opens persisted questions after reload and keeps active task 
  await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();
  expect(await page.evaluate(()=>window.__learningAttempts.length)).toBe(0);
 });
+
+test('daily grid scrolls independently and smoothly centers a newly selected question',async({page})=>{
+  await page.setViewportSize({width:1280,height:800});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.clock.install({time:t});
+  await page.goto(url+'?large=1');
+  await expect(page.getByRole('heading',{name:'考试计划'})).toBeVisible();
+  await plan(page);
+  await openReport(page);
+  await page.getByRole('button',{name:/^第51题 /}).click();
+  await button(page,'学习此题').click();
+  const scroller=page.getByTestId('learning-question-scroll');
+  const progress=page.getByTestId('learning-daily-progress');
+  await expect(scroller).toBeVisible();
+  const selected=scroller.locator('[aria-current=true]');
+  await expect(selected).toHaveText('51');
+  await expect.poll(()=>scroller.evaluate(el=>el.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(()=>scroller.evaluate(el=>{
+    const r=el.getBoundingClientRect(),b=el.querySelector('[aria-current=true]').getBoundingClientRect();
+    return Math.abs((r.top+r.bottom-b.top-b.bottom)/2);
+  })).toBeLessThan(3);
+  const before=await progress.boundingBox();
+  await scroller.evaluate(el=>el.scrollTop=0);
+  await expect.poll(()=>scroller.evaluate(el=>el.scrollTop)).toBe(0);
+  expect(await progress.boundingBox()).toEqual(before);
+  await page.clock.runFor(6000);
+  expect(await scroller.evaluate(el=>el.scrollTop)).toBe(0);
+});

@@ -9,6 +9,9 @@ const bank={1:[
 {id:'MG-4',type:'big',question:'测试简答：第四题',options:['参考要点辛'],rawAnswer:[0],explanation:'测试解析辛',category:'第二章'},
 {id:'MG-5',type:'judgment',question:'测试判断：第五题',options:['正确','错误'],rawAnswer:[1],explanation:'测试解析壬',category:'第二章'}
 ]};
+if(new URLSearchParams(location.search).has('large')){
+  for(let i=6;i<=100;i++)bank[1].push({id:'MG-'+i,type:'single',question:'测试题 '+i,options:['正确','错误'],rawAnswer:[0],explanation:'测试解析',category:'第二章'});
+}
 const empty=new Set();
 window.__learningAttempts=[];
 createRoot(document.getElementById('root')).render(<React.StrictMode><SmartLearning subject="maogai" subjectName="测试题库" bank={bank} user={null} wrongIds={empty} brushedIds={empty} onBack={()=>{}} onAttempt={a=>window.__learningAttempts.push(a)}/></React.StrictMode>);

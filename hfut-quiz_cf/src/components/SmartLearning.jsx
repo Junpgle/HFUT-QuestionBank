@@ -627,8 +627,8 @@ function SmartLearningSession({
   return (
     <div className="h-[100dvh] flex flex-col md:flex-row bg-slate-100 dark:bg-slate-900">
       {/* Desktop sidebar matching QuizSidebar */}
-      <aside className="hidden md:flex w-72 bg-white border-r border-slate-200 flex-col dark:bg-slate-900 dark:border-slate-800 shrink-0">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center dark:border-slate-800">
+      <aside className="hidden md:flex w-72 bg-white border-r border-slate-200 flex-col dark:bg-slate-900 dark:border-slate-800 shrink-0 min-h-0 overflow-hidden">
+        <div className="shrink-0 p-6 border-b border-slate-100 flex justify-between items-center dark:border-slate-800">
           <button
             type="button"
             disabled={busy}
@@ -642,9 +642,9 @@ function SmartLearningSession({
           </span>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden p-4 gap-4">
           {plan&&(
-            <div className="space-y-2.5">
+            <div className="shrink-0 space-y-2.5" data-testid="learning-daily-progress">
               <div className="px-1 text-xs font-semibold text-slate-400 dark:text-slate-500">今日进度</div>
               <div className="grid grid-cols-1 gap-2">
                 {[
@@ -663,7 +663,7 @@ function SmartLearningSession({
           {questionGrid.length>0&&<LearningQuestionGrid entries={questionGrid} currentId={q?.id} busy={busy} onSelect={onSelectGrid} showLearned={showLearnedGrid} onToggleLearned={onToggleLearnedGrid} olderCount={olderLearnedCount}/>}
         </div>
 
-        <div className="p-4 border-t border-slate-100 text-xs text-center text-slate-400 dark:border-slate-800 dark:text-slate-500">
+        <div className="shrink-0 p-4 border-t border-slate-100 text-xs text-center text-slate-400 dark:border-slate-800 dark:text-slate-500">
           智能学习模式
         </div>
       </aside>
@@ -749,6 +749,20 @@ function SmartLearningSession({
 }
 
 function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onToggleLearned,olderCount}){
+  const scrollRef=useRef(null),currentRef=useRef(null);
+  const currentIndex=entries.findIndex(entry=>entry.id===currentId);
+  useEffect(()=>{
+    if(currentIndex<0)return;
+    const frame=requestAnimationFrame(()=>{
+      const scroller=scrollRef.current,button=currentRef.current;
+      if(!scroller||!button||!scroller.clientHeight)return;
+      const box=scroller.getBoundingClientRect(),item=button.getBoundingClientRect();
+      const top=Math.max(0,Math.min(scroller.scrollHeight-scroller.clientHeight,scroller.scrollTop+item.top-box.top+(item.height-scroller.clientHeight)/2));
+      if(Math.abs(top-scroller.scrollTop)<1)return;
+      scroller.scrollTo({top,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[currentId,currentIndex,showLearned]);
   const labels={new:'未学习',pending:'待巩固',due:'待复习',complete:'已完成'};
   const tones={
     new:'bg-slate-50 text-slate-400 hover:bg-slate-100 dark:bg-slate-950 dark:text-slate-500 dark:hover:bg-slate-800',
@@ -757,17 +771,18 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onTog
     complete:'bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-900/40'
   };
   return (
-    <section aria-label="今日学习题号" className="space-y-2.5">
-      <div className="flex items-center justify-between px-1 text-xs font-semibold text-slate-400 dark:text-slate-500">
+    <section aria-label="今日学习题号" className="flex flex-col flex-1 min-h-0 gap-2.5 overflow-hidden">
+      <div className="shrink-0 flex items-center justify-between px-1 text-xs font-semibold text-slate-400 dark:text-slate-500">
         <span>{showLearned?'今日及已学题目':'今日题目'}</span><span className="tabular-nums">{entries.length} 题</span>
       </div>
+      <div ref={scrollRef} data-testid="learning-question-scroll" className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1 -mx-1 [scrollbar-width:thin]">
       <div className="grid grid-cols-5 gap-2">
         {entries.map(({id,status,available},i)=>{
           const current=id===currentId;
           const label=labels[status];
           const accessible='第 '+(i+1)+' 题 · '+(current?'当前查看 · ':'')+label;
           return (
-            <button key={id} type="button" aria-label={accessible} aria-current={current?'true':undefined}
+            <button key={id} ref={current?currentRef:null} type="button" aria-label={accessible} aria-current={current?'true':undefined}
               title={accessible+(available?'（点击查看）':'（由智能学习安排）')}
               disabled={busy||!available} onClick={()=>onSelect(id)}
               className={'aspect-square rounded-lg text-sm font-bold flex items-center justify-center transition-all disabled:cursor-default '+(current?'bg-blue-600 text-white shadow-md ring-2 ring-blue-200 dark:ring-blue-900/50':tones[status])}>
@@ -776,13 +791,14 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onTog
           );
         })}
       </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 px-1 text-[10px] text-slate-500 dark:text-slate-400">
+      </div>
+      <div className="shrink-0 flex flex-wrap gap-x-3 gap-y-1 px-1 text-[10px] text-slate-500 dark:text-slate-400">
         {[['bg-slate-300','未学习'],['bg-amber-400','待巩固'],['bg-indigo-400','待复习'],['bg-green-500','已完成']].map(([color,label])=>(
           <span key={label} className="inline-flex items-center gap-1"><span className={'w-2 h-2 rounded-sm '+color} aria-hidden="true"/>{label}</span>
         ))}
       </div>
-      {olderCount>0&&<button type="button" onClick={onToggleLearned} aria-expanded={showLearned} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:border-slate-700 dark:text-blue-400 dark:hover:bg-slate-800">{showLearned?'仅显示今日题目':'查看此前已学题目（'+olderCount+'）'}</button>}
-      <p className="px-1 text-[10px] text-slate-400 dark:text-slate-500">已学题可点击查看，未学题由智能学习安排。</p>
+      {olderCount>0&&<button type="button" onClick={onToggleLearned} aria-expanded={showLearned} className="shrink-0 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:border-slate-700 dark:text-blue-400 dark:hover:bg-slate-800">{showLearned?'仅显示今日题目':'查看此前已学题目（'+olderCount+'）'}</button>}
+      <p className="shrink-0 px-1 text-[10px] text-slate-400 dark:text-slate-500">已学题可点击查看，未学题由智能学习安排。</p>
     </section>
   );
 }

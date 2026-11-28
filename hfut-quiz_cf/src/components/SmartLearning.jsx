@@ -25,7 +25,7 @@ import {readDraft,writeDraft,validDraft,cardVersion} from '../learning/session';
 import {learningAttempt} from '../learning/attempt';
 import {ignoreQuizShortcut,optionShortcutIndex} from '../utils/quizShortcuts';
 import {gradeFill,parseFillAnswer} from '../utils/fillAnswer';
-import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY,questionMemoryStage,MEMORY_STAGES,todayQuestionIds,learningGridStatus} from '../learning/scheduler';
+import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY,questionMemoryStage,MEMORY_STAGES,todayQuestionIds,learningGridStatus,chooseEarlyRecall} from '../learning/scheduler';
 import {loadLearning,appendLearning,exchangeLearning,makeLearningEvent,unionEvents,scheduleLearningSync,subscribeLearning,importLearning} from '../learning/store';
 
 const surface='rounded-[1.5rem] md:rounded-[2rem] border border-slate-200/90 bg-white p-4 sm:p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900';
@@ -163,6 +163,13 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
     const learnedIds=ids.filter(id=>state.cards[id]&&!dailyIds.includes(id));
     const gridIds=showLearnedGrid?[...dailyIds,...learnedIds]:dailyIds;
     const questionGrid=gridIds.map(id=>({id,status:learningGridStatus(state.cards[id],state.plan,now),available:id===task?.id||recent.has(id)||Boolean(state.cards[id])}));
+    const earlyRecall=!task?chooseEarlyRecall({ids,state,now}):null;
+    const startEarlyRecall=()=>{
+      if(locked||task||!earlyRecall||!state.plan)return;
+      returnCurrent();
+      const d={task:earlyRecall,version:cardVersion(state.cards[earlyRecall.id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};
+      draftRef.current=d;setDraft(d);setDraftWarning(!writeDraft(user,subject,d));setTask(earlyRecall);
+    };
     const selectGrid=id=>{
       if(locked)return;
       if(id===task?.id){returnCurrent();return;}
@@ -185,6 +192,10 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         pending={pending}
         completedReviews={completedReviews}
         waitUntil={waitUntil}
+        canEarlyRecall={Boolean(earlyRecall)}
+        onEarlyRecall={startEarlyRecall}
+        canExtraNew={!task&&Boolean(plan?.unseen.length)}
+        onExtraNew={()=>{if(!locked&&!task){returnCurrent();setExtra(true);setNow(Date.now());}}}
         now={now}
         busy={locked}
         error={error}
@@ -609,7 +620,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 }
 
 function SmartLearningSession({
-  q,task,card,questionGrid,onSelectGrid,showLearnedGrid,onToggleLearnedGrid,olderLearnedCount,isInspection=false,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,
+  q,task,card,questionGrid,onSelectGrid,showLearnedGrid,onToggleLearnedGrid,olderLearnedCount,isInspection=false,plan,due,pending,completedReviews,waitUntil,canEarlyRecall,onEarlyRecall,canExtraNew,onExtraNew,now,busy,error,draftWarning,answer,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onExit,onDone,
 }){
@@ -621,7 +632,11 @@ function SmartLearningSession({
       if(e.key==='ArrowRight'&&canNext){e.preventDefault();onNext?.();}
     };
     window.addEventListener('keydown',onKey);
-    return ()=>window.removeEventListener('keydown',onKey);
+    const waitingToday=waitUntil!=null&&localDay(waitUntil)===localDay(now)&&waitUntil>now;
+  const secondsLeft=waitingToday?Math.ceil((waitUntil-now)/1000):0;
+  const waitLabel=secondsLeft<60?secondsLeft+' 秒':Math.ceil(secondsLeft/60)+' 分钟';
+
+  return ()=>window.removeEventListener('keydown',onKey);
   },[busy,onExit,canPrev,canNext,onPrev,onNext]);
 
   return (
@@ -728,17 +743,19 @@ function SmartLearningSession({
             ):(
               <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] p-6 md:p-10 shadow-sm border border-slate-200 text-center dark:bg-slate-900 dark:border-slate-800">
                 <div className="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
-                  {pending?<Clock size={28} aria-hidden="true"/>:<CheckCircle2 size={28} aria-hidden="true"/>}
+                  {waitingToday?<Clock size={28} aria-hidden="true"/>:<CheckCircle2 size={28} aria-hidden="true"/>}
                 </div>
                 <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 [text-wrap:balance]">
-                  {pending?'暂时没有可立即学习的题目':'本轮学习完成'}
+                  {waitingToday?'正在等待巩固间隔':'本轮学习完成'}
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-slate-400 leading-relaxed [text-wrap:pretty]">
-                  {pending?(waitUntil&&waitUntil>now?'下次可巩固约 '+Math.ceil((waitUntil-now)/60000)+' 分钟后，可稍后继续。':'待巩固题会在间隔满足后再次出现，可等待或稍后继续。'):'已自动安排后续复习。'}
+                  {waitingToday?'正常巩固间隔还剩约 '+waitLabel+'，到时会自动出题。也可以选择继续学习。':pending?'剩余巩固题已安排在后续学习日。':'已自动安排后续复习。'}
                 </p>
-                <button type="button" className={btnPrimary+' mt-6'} disabled={busy} onClick={onExit}>
-                  返回学习计划
-                </button>
+                <div className="mt-5 flex flex-wrap justify-center gap-2.5">
+                  {canEarlyRecall&&<button type="button" className={btnPrimary} disabled={busy} onClick={onEarlyRecall}>提前巩固</button>}
+                  {canExtraNew&&<button type="button" className={canEarlyRecall?btnSecondary:btnPrimary} disabled={busy} onClick={onExtraNew}>继续学习新题</button>}
+                  <button type="button" className={btnSecondary} disabled={busy} onClick={onExit}>返回学习计划</button>
+                </div>
               </div>
             )}
           </div>

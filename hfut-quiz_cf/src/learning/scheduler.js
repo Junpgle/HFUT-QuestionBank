@@ -131,6 +131,15 @@ export function nextShortTime(ids,state,now){
   });
   return times.length?Math.min(...times):null;
 }
+// Explicit, optional early reinforcement when the normal queue is empty.
+export function chooseEarlyRecall({ids,state,now}){
+  if(!state.plan)return null;
+  const eligible=ids.filter(id=>{
+    const c=state.cards[id];
+    return c&&c.phase!=='review'&&canRetryToday(c,now)&&localDay(c.due)<=localDay(now);
+  }).sort((a,b)=>Number(a===state.lastId)-Number(b===state.lastId)||state.cards[a].due-state.cards[b].due);
+  return eligible.length?{id:eligible[0],kind:'recall'}:null;
+}
 export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   const {cards,plan,step,lastId}=state;
   if(!plan)return null;

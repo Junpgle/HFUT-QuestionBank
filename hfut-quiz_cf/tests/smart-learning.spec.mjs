@@ -182,3 +182,17 @@ test('daily grid scrolls independently and smoothly centers a newly selected que
   await page.clock.runFor(6000);
   expect(await scroller.evaluate(el=>el.scrollTop)).toBe(0);
 });
+
+test('waiting for first recall offers explicit early reinforcement or more new cards',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await open(page);
+ await page.getByLabel('考试日期').fill('2026-12-15');
+ await button(page,'保存学习计划').click();
+ await button(page,'开始今日学习').click();
+ await button(page,'已记忆，继续').click();
+ await expect(page.getByRole('heading',{name:'正在等待巩固间隔'})).toBeVisible();
+ await expect(button(page,'继续学习新题')).toBeVisible();
+ await button(page,'提前巩固').click();
+ await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'参考答案'})).toHaveCount(0);
+ expect(await page.evaluate(()=>window.__learningAttempts.length)).toBe(0);
+});

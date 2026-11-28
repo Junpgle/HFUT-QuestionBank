@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DAY,rateCard,recallProbability,intervalDays,dailyPlan,replayEvents,chooseNext,localDay,isReviewDue,memoryLevel,dayStart,nextShortTime,FIRST_RECALL_DELAY,questionMemoryStage,todayQuestionIds,learningGridStatus} from './scheduler.js';
+import {DAY,rateCard,recallProbability,intervalDays,dailyPlan,replayEvents,chooseNext,localDay,isReviewDue,memoryLevel,dayStart,nextShortTime,FIRST_RECALL_DELAY,questionMemoryStage,todayQuestionIds,learningGridStatus,chooseEarlyRecall} from './scheduler.js';
 const t=new Date(2026,10,28,10).getTime();
 const p={exam:'2026-12-15',reserve:3,scope:'all'};
 const ev=(id,kind,fields={},at=t)=>({id,kind,at,day:localDay(at),...fields});
@@ -151,4 +151,14 @@ test('daily grid uses scoped quota and retains studied and due questions',()=>{
  const rated=replayEvents([ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),ev('r','rate',{questionId:'a',rating:3},t+30000)]);
  assert.equal(learningGridStatus(rated.cards.a,plan,t+30000),'complete');
  assert.equal(learningGridStatus(rated.cards.a,plan,t+DAY+30000),'due');
+});
+
+test('optional early recall avoids mandatory idle time without bypassing daily cap',()=>{
+ const plan={...p,exam:localDay(t+10*DAY),reserve:0};
+ const state=replayEvents([ev('p','plan',{plan}),ev('a','intro',{questionId:'a'})]);
+ assert.equal(chooseNext({ids:['a','b'],state,now:t+1000}),null);
+ assert.deepEqual(chooseEarlyRecall({ids:['a','b'],state,now:t+1000}),{id:'a',kind:'recall'});
+ assert.deepEqual(chooseNext({ids:['a','b'],state,now:t+1000,extra:true}),{id:'b',kind:'intro'});
+ const capped=replayEvents([ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),...[1,2,3,4].map(i=>ev('r'+i,'rate',{questionId:'a',rating:1},t+i*600000))]);
+ assert.equal(chooseEarlyRecall({ids:['a'],state:capped,now:t+2400000}),null);
 });

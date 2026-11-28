@@ -1,5 +1,11 @@
 name: Smart learning checks
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'hfut-quiz_cf/**'
+      - 'hfut-backend/**'
+      - '.github/workflows/smart-learning.yml'
   pull_request:
     paths:
       - 'hfut-quiz_cf/**'

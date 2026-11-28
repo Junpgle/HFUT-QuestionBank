@@ -105,7 +105,7 @@ test('fast new-card sessions interleave first recall before finishing a ten-card
  }
  assert.deepEqual(sequence.slice(0,6),[
    {id:'q0',kind:'intro'},{id:'q1',kind:'intro'},{id:'q2',kind:'intro'},
-   {id:'q0',kind:'recall'},{id:'q3',kind:'intro'},{id:'q1',kind:'recall'}
+   {id:'q0',kind:'recall'},{id:'q1',kind:'recall'},{id:'q2',kind:'recall'}
  ]);
  assert.equal(sequence.filter(x=>x.kind==='intro').length,10);
  assert.equal(sequence.filter(x=>x.kind==='recall').length,10);

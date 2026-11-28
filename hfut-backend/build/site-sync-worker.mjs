@@ -12491,8 +12491,8 @@ function clean(e, subject) {
     return { ...base, plan: { exam: p.exam, reserve: p.reserve, scope: p.scope, target: p.target ?? 0.9 } };
   }
   if (typeof e.questionId !== "string" || e.questionId.length > 100 || !prefixes[subject].test(e.questionId)) throw Error("\u65E0\u6548\u9898\u76EE ID");
-  if (e.kind === "intro") return { ...base, questionId: e.questionId, ...e.difficult === true ? { difficult: true } : {} };
-  if (e.kind === "rate" && [1, 2, 3, 4].includes(e.rating)) return { ...base, questionId: e.questionId, rating: e.rating, ...e.source === "practice" ? { source: "practice" } : {} };
+  if (e.kind === "intro") return { ...base, questionId: e.questionId, ...e.difficult === true ? { difficult: true } : {}, ...typeof e.relearnOf === "string" && /^[a-f0-9-]{36}$/i.test(e.relearnOf) ? { relearnOf: e.relearnOf } : {} };
+  if (e.kind === "rate" && [1, 2, 3, 4].includes(e.rating)) return { ...base, questionId: e.questionId, rating: e.rating, ...e.source === "practice" ? { source: "practice" } : {}, ...e.rating === 1 && e.relearned === true ? { relearned: true } : {} };
   throw Error("\u65E0\u6548\u4E8B\u4EF6\u7C7B\u578B");
 }
 __name(clean, "clean");

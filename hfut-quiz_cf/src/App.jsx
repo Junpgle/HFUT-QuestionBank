@@ -34,6 +34,7 @@ import {DashboardMainContentShell} from './components/DashboardMainContentShell'
 import {QuizSidebar} from './components/QuizSidebar';
 import {QuizMobileTopBar} from './components/QuizMobileTopBar';
 import {QuizNavControls} from './components/QuizNavControls';
+import {ignoreQuizShortcut,quizShortcutAction} from './utils/quizShortcuts';
 import {QuizQuestionPanel} from './components/QuizQuestionPanel';
 import SmartLearning from './components/SmartLearning';
 import {recordPractice} from './learning/store';
@@ -2632,11 +2633,17 @@ function App() {
         setSyncStatus('success');
         setSyncMsg('备注已保存（本地）');
     };
+    const quizCommitRef=useRef(null);
+    const claimQuizAnswer=(q)=>{
+        if(!q||isAnswered||quizCommitRef.current===q.id)return false;
+        quizCommitRef.current=q.id;return true;
+    };
+    useLayoutEffect(()=>{quizCommitRef.current=null;},[currentIndex,currentMode,questions]);
     const handleOptionClick = (idx) => {
         // 如果是背题模式，或者已经作答过了，点击无效
         if (currentMode === 'memorize' || isAnswered) return;
         const currentQ = questions[currentIndex];
-        if (currentQ.type === 'fill' && currentMode !== 'memorize') return;
+        if (!currentQ||currentQ.type === 'fill') return;
         // 多选题逻辑：点击只是选中/取消选中，不自动提交
         if (currentQ.type === 'multiple') {
             setSelectedIndices(prev =>
@@ -2719,6 +2726,7 @@ function App() {
         const normalizedSelection = normalizeAnswerIndices(finalSelection);
         if (normalizedSelection.length === 0) return;
         const currentQ = questions[currentIndex];
+        if(!claimQuizAnswer(currentQ))return;
         // 1. 判定对错
         const correctSet = new Set(normalizeAnswerIndices(currentQ.rawAnswer));
         const userSet = new Set(normalizedSelection);
@@ -2753,7 +2761,7 @@ function App() {
         if (!currentQ) return;
         const blanks = parseFillAnswer(currentQ.options?.[0], currentQ.question);
         const inputs = blanks.map((_, i) => String(fillInputs[i] || '').trim());
-        if (inputs.every(v => !v)) return;
+        if (inputs.every(v => !v)||!claimQuizAnswer(currentQ)) return;
         const {isCorrect} = gradeFill(inputs, blanks);
         const answerText = inputs.join('；');
         setIsAnswered(true);
@@ -2783,7 +2791,7 @@ function App() {
             action: 'memorize',
             timestamp: new Date().toISOString(),
         }, ...prev]);
-        setTimeout(() => nextQuestion(), 400);
+        nextQuestion();
     };
     const startMode = (mode) => {
         const action = () => {
@@ -2859,6 +2867,45 @@ function App() {
             setCurrentMode('dashboard');
         });
     };
+    // Deliberately reveal an unattempted objective answer as a failed recall, not a silent skip.
+    const revealQuizAnswer=()=>{
+        const q=questions[currentIndex];
+        if(!q||q.type==='big'||!claimQuizAnswer(q))return;
+        const answer='忘记了';
+        const id=crypto.randomUUID();
+        setIsAnswered(true);setShowExplanation(true);
+        setSelectedByQuestion(prev=>({...prev,[q.id]:selectedIndices}));
+        if(q.type==='fill')setFillInputsByQuestion(prev=>({...prev,[q.id]:fillInputs}));
+        applyResultStats(q.id,false);
+        submitQuestionResult(q.id,false,q.question,q.category,answer,id);
+        setHistory(prev=>[{id,questionId:q.id,questionTitle:q.question,action:'answer',isCorrect:false,userAnswer:answer,timestamp:new Date().toISOString()},...prev]);
+    };
+    // Window listener only while a regular practice screen is active; smart learning owns its keys.
+    useEffect(()=>{
+        if(!['quiz','memorize','mistakes','favorites'].includes(currentMode)||!questions[currentIndex]||showLoginScreen||showUploadModal||showAiModal||showApiSettingsModal||showResetModal||showUpdateModal||selectorModal.open||viewingRankQuestion)return;
+        const onKey=e=>{
+            if(ignoreQuizShortcut(e)||document.querySelector('dialog[open],[role="dialog"][aria-modal="true"]'))return;
+            const q=questions[currentIndex];
+            const action=quizShortcutAction(e.key,{mode:currentMode,type:q.type,answered:isAnswered,selectedCount:selectedIndices.length,optionCount:q.options?.length||0,canGoBack:currentIndex>0});
+            if(!action)return;
+            // Keep Enter/Space activation for non-answer controls reached with Tab.
+            const focused=e.target?.closest?.('button,a[href],[role="button"]');
+            if((e.key===' '||e.key==='Enter')&&focused&&!focused.hasAttribute('data-quiz-option')&&!focused.hasAttribute('data-quiz-action'))return;
+            e.preventDefault();
+            switch(action.type){
+                case 'exit':exitToDashboard();break;
+                case 'previous':prevQuestion();break;
+                case 'next':nextQuestion();break;
+                case 'memorize':handleMemorizeCheck();break;
+                case 'option':handleOptionClick(action.index);break;
+                case 'submit':submitAnswer();break;
+                case 'submit-fill':document.querySelector('[data-quiz-fill-submit]:not([disabled])')?.click();break;
+                case 'reveal':revealQuizAnswer();break;
+            }
+        };
+        window.addEventListener('keydown',onKey);
+        return ()=>window.removeEventListener('keydown',onKey);
+    });
     const switchSubject = () => {
         if (sessionAutoSaveTimerRef.current) {
             clearTimeout(sessionAutoSaveTimerRef.current);
@@ -3448,6 +3495,8 @@ function App() {
                                     onPrev={prevQuestion}
                                     onNext={nextQuestion}
                                     onMemorizeNext={handleMemorizeCheck}
+                                    questionType={currentQ.type}
+                                    isAnswered={isAnswered}
                                 />
                             </div>
                             {showContent && (

@@ -23,6 +23,7 @@ import {QuizQuestionPanel} from './QuizQuestionPanel';
 import {makeBackup,parseBackup,LIMIT} from '../learning/backup';
 import {readDraft,writeDraft,validDraft,cardVersion} from '../learning/session';
 import {learningAttempt} from '../learning/attempt';
+import {ignoreQuizShortcut,optionShortcutIndex} from '../utils/quizShortcuts';
 import {gradeFill,parseFillAnswer} from '../utils/fillAnswer';
 import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY} from '../learning/scheduler';
 import {loadLearning,appendLearning,exchangeLearning,makeLearningEvent,unionEvents,scheduleLearningSync,subscribeLearning,importLearning} from '../learning/store';
@@ -552,9 +553,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 function SmartLearningSession({q,task,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,onAnswer,onExit,onDone}){
   useEffect(()=>{
     const onKey=e=>{
-      if(busy||e.metaKey||e.ctrlKey||e.altKey)return;
-      const tag=e.target?.tagName;
-      if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||e.target?.isContentEditable)return;
+      if(busy||ignoreQuizShortcut(e))return;
       if(e.key==='Escape'){e.preventDefault();onExit();}
     };
     window.addEventListener('keydown',onKey);
@@ -718,9 +717,7 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
 
   useEffect(()=>{
     const onKey=e=>{
-      if(busy||e.metaKey||e.ctrlKey||e.altKey)return;
-      const tag=e.target?.tagName;
-      if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||e.target?.isContentEditable)return;
+      if(busy||ignoreQuizShortcut(e))return;
       const key=e.key;
       if(intro){
         if(key==='Enter'||key===' '){e.preventDefault();onDone();}
@@ -729,10 +726,8 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
       }
       if(!show){
         if(!big&&q.type!=='fill'&&Array.isArray(q.options)){
-          let idx=-1;
-          if(/^[1-8]$/.test(key))idx=Number(key)-1;
-          else if(/^[a-hA-H]$/.test(key))idx=key.toUpperCase().charCodeAt(0)-65;
-          if(idx>=0&&idx<q.options.length){
+          const idx=optionShortcutIndex(key,q.options.length);
+          if(idx>=0){
             e.preventDefault();
             if(q.type==='multiple')patch({selected:selected.includes(idx)?selected.filter(x=>x!==idx):[...selected,idx]});
             else submit([idx]);

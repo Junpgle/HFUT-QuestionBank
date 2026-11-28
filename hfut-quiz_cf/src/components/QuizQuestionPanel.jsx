@@ -259,12 +259,12 @@ export function QuizQuestionPanel({
                     placeholder="请输入答案"
                     onChange={(e) => onFillInputChange?.(idx, e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.nativeEvent?.isComposing) {
+                      if (e.key === 'Enter' && !e.nativeEvent?.isComposing && e.keyCode!==229 && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
                         e.preventDefault();
                         if (idx < blanks.length - 1) {
                           inputRefs.current[idx + 1]?.focus();
                         } else if (!isAnswered) {
-                          onFillSubmit?.({ usedHint: hintInfo.revealedCount > 0 });
+                          if(hasAnyFillInput){onFillSubmit?.({ usedHint: hintInfo.revealedCount > 0 });e.currentTarget.blur();}
                         }
                       }
                     }}
@@ -323,6 +323,8 @@ export function QuizQuestionPanel({
               </button>
               <button
                 type="button"
+                data-quiz-fill-submit
+                data-quiz-action
                 onClick={() => onFillSubmit?.({ usedHint: hintInfo.revealedCount > 0 })}
                 disabled={!hasAnyFillInput}
                 className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2
@@ -379,6 +381,8 @@ export function QuizQuestionPanel({
               return (
                 <button
                   key={idx}
+                  data-quiz-option
+                  aria-keyshortcuts={isQuiz&&!isAnswered&&idx<8?`${idx+1} ${String.fromCharCode(65+idx)}`:undefined}
                   aria-pressed={isQuiz&&!isAnswered?selectedIndices.includes(idx):undefined}
                   onClick={() => onOptionClick(idx)}
                   className={`w-full p-3.5 sm:p-4 md:p-5 rounded-xl text-left border-2 transition-all flex items-start gap-3 md:gap-4 group relative
@@ -407,6 +411,8 @@ export function QuizQuestionPanel({
           {isQuiz && !isAnswered && currentQ.type === 'multiple' && (
             <div className="flex justify-end animate-enter pt-4">
               <button
+                data-quiz-action
+                aria-keyshortcuts="Enter"
                 onClick={() => onSubmit()}
                 className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2
                   ${selectedIndices.length > 0 ? 'bg-blue-600 text-white hover:bg-blue-700 hover:-translate-y-1' : 'bg-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-800 dark:text-slate-600'}`}

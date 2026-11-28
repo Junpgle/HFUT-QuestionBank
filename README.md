@@ -161,3 +161,6 @@ npm run deploy   # 部署至 Cloudflare Workers
 
 ### 智能学习共享答题统计
 智能学习完成客观作答后写入普通刷题状态及历史，并复用 `/api/sync-all` 批量统计；即时和跨天复习均计数，不按日期或题目去重。首次看答案不计，主观自评及提示辅助仅更新个人记录；实际答对但自评蒙对按客观正确统计、个人记忆按自评处理。每次作答 UUID 由 D1 唯一键和触发器去重，重复请求不会重复计数。部署新版前执行 `npx wrangler d1 execute hfut-db --remote --file=./migrations/0002_question_attempt_receipts.sql`。排行榜人数仅从新版统计开始，旧版计数保留。
+
+### 普通答题键盘快捷键
+普通刷题、错题和收藏练习支持 1–8 / A–H 选择、Enter 提交多选、Space/F 未作答时忘记并显示答案（计为失败回忆），作答后 Space/Enter 下一题，←/→ 仅翻题、Esc 返回。背题 Space/Enter 确认记住并继续。填空输入中 Enter 下一空或提交，输入框、弹窗、组合键、输入法和长按重复不触发全局快捷键。

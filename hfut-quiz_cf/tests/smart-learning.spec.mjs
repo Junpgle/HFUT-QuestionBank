@@ -51,7 +51,7 @@ test('backup import merges on explicit confirmation and cross-day review hides a
   await page.locator('input[type=file]').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(payload))});
   await expect(page.getByText(/已验证 2 条事件/)).toBeVisible();
   await button(page,'确认合并').click();
-  await expect(page.getByText(/备份已合并/)).toBeVisible();
+  await expect(page.getByRole('status').filter({hasText:'备份已合并'}).filter({visible:true})).toBeVisible();
   await expect(page.getByText(/进入复习 1 题/)).toBeVisible();
   await button(page,'开始今日学习').click();
   // Queue starts with one new card (step=2), then alternates to old review (step=3).
@@ -80,7 +80,7 @@ test('fill and short answer drafts, grading and self assessment',async({page})=>
   await selectCard(page,3);
   await page.getByLabel('填空 1').fill('答案庚');
   await button(page,'确认提交').click();
-  await expect(page.getByText('回答正确',{exact:true})).toBeVisible();
+  await expect(page.getByRole('status').filter({hasText:'回答正确'})).toBeVisible();
   await button(page,'记得').click();
   await returnPlan(page);
   await selectCard(page,4);

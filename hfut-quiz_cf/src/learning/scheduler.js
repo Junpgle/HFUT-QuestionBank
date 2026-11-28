@@ -157,7 +157,6 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   if(!plan)return null;
   const p=dailyPlan(ids,cards,plan,now);
   const relearn=ids.filter(id=>cards[id]?.pendingRelearn&&cards[id].phase!=='review'&&canRetryToday(cards[id],now)&&cards[id].due<=now).sort((a,b)=>cards[a].lastReview-cards[b].lastReview);
-  if(relearn.length)return {id:relearn[0],kind:'relearn'};
   // Exclude immediate same-day repeats, not the last question from a previous day.
   const candidates=ids.filter(id=>id!==lastId||(cards[id]&&localDay(cards[id].relearnedAt||cards[id].lastReview||cards[id].firstSeen)!==localDay(now)));
   const short=candidates.filter(id=>{
@@ -175,6 +174,8 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   const fresh=p.unseen.sort((a,b)=>(priority.get(a)??Infinity)-(priority.get(b)??Infinity))[0];
   const allowNew=fresh&&(extra||p.remainingNew>0);
   if(short.length)return {id:short[0],kind:'recall'};
+  // Mix backfilled relearning with recall instead of batching all old failures.
+  if(relearn.length)return {id:relearn[0],kind:'relearn'};
   // Alternate review and introduction while both are available.
   if(due.length&&(!allowNew||step%2===1))return {id:due[0],kind:'review'};
   if(allowNew)return {id:fresh,kind:'intro'};

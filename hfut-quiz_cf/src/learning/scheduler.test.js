@@ -210,3 +210,15 @@ test('legacy unresolved failures require one explicit relearn before another rec
  const modern=replayEvents([events[0],events[1],{...events[2],relearned:true}]);
  assert.equal(modern.cards.a.pendingRelearn,null);
 });
+
+test('historical relearning is interleaved with recall, not a large separate batch',()=>{
+ const ids=['a','b','c','d','e'],plan={...p,exam:localDay(t),reserve:0};
+ const events=[ev('p','plan',{plan}),...ids.flatMap((id,i)=>[ev('i'+id,'intro',{questionId:id},t+i*2000),ev('f'+id,'rate',{questionId:id,rating:1},t+i*2000+1000)])];
+ for(let i=0;i<3;i++){
+   const state=replayEvents(events);
+   const task=chooseNext({ids,state,now:t+10000+i*1000});
+   assert.deepEqual(task,{id:ids[i],kind:'relearn'});
+   events.push(ev('c'+i,'intro',{questionId:task.id,relearnOf:'f'+task.id},t+10000+i*1000));
+ }
+ assert.deepEqual(chooseNext({ids,state:replayEvents(events),now:t+13000}),{id:'a',kind:'recall'});
+});

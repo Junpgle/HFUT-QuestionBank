@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { BookOpen, Brain, ChevronLeft, ChevronRight, DownloadCloud, FileDown, FileUp, Github, GraduationCap, Info, Loader2, Maximize, Minimize, Settings, Trash2, UploadCloud, User, Users, Eye, Wand2 } from 'lucide-react';
 import mottos from './data/mottos.json';
 import { formatDate } from './utils/date';
-import {siteMetricsDay} from './utils/siteMetrics';
+import {siteMetricsDay,displayOnlineCount,displayMetricCount} from './utils/siteMetrics';
 
 const CustomUploadModal = lazy(() => import('./CustomUploadModal.jsx'));
 const AIQuestionModal = lazy(() => import('./AIQuestionModal.jsx'));
@@ -263,13 +263,13 @@ export const SubjectSelector = ({
                     )}
                     <div className="flex flex-wrap justify-center items-center gap-2 mb-4 animate-fade-in text-xs font-semibold tabular-nums">
                         {[
-                            {icon:User,label:'在线',value:onlineCount,title:'最近3分钟有活动的登录账号'},
-                            {icon:Eye,label:'今日浏览量',value:siteMetrics?.day===siteMetricsDay()?siteMetrics.pageViews:null,title:'北京时间今日页面打开或刷新次数，含游客'},
-                            {icon:Users,label:'累计注册人数',value:siteMetrics?.registeredCount??null,title:'已完成邮箱验证的账号总数'},
-                        ].map(({icon:Icon,label,value,title})=>(
+                            {icon:User,label:'在线',value:displayOnlineCount(onlineCount),title:'最近3分钟有活动的登录账号（显示下限为1）'},
+                            {icon:Eye,label:'今日浏览量',value:siteMetrics?.pageViews??null,stale:!!siteMetrics&&(siteMetrics.cached||siteMetrics.day!==siteMetricsDay()),title:siteMetrics&&(siteMetrics.cached||siteMetrics.day!==siteMetricsDay())?`上次成功获取的浏览量（${siteMetrics.day}），等待新数据`:'北京时间今日页面打开或刷新次数，含游客'},
+                            {icon:Users,label:'累计注册人数',value:siteMetrics?.registeredCount??null,stale:!!siteMetrics?.cached,title:siteMetrics?.cached?'上次成功获取的注册人数，等待新数据':'已完成邮箱验证的账号总数'},
+                        ].map(({icon:Icon,label,value,title,stale})=>(
                             <span key={label} title={title} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-slate-600 shadow-sm dark:bg-slate-900/80 dark:border-slate-800 dark:text-slate-300">
                                 <Icon size={13} aria-hidden="true" className="text-blue-500 dark:text-blue-400"/>
-                                <span>{label}：</span><strong className="text-slate-800 dark:text-slate-100">{value==null?'—':value.toLocaleString('zh-CN')}</strong>
+                                <span>{label}：</span><strong className="text-slate-800 dark:text-slate-100">{displayMetricCount(value)}</strong>{stale&&<span className="text-[10px] font-normal text-slate-400 dark:text-slate-500">缓存</span>}
                             </span>
                         ))}
                     </div>

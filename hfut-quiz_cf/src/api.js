@@ -101,6 +101,17 @@ export const api = {
     return data;
   },
 
+  // A simple public POST avoids CORS preflight and does not send account tokens.
+  async recordSiteVisit(visitId) {
+    const response=await fetch(API_BASE+'/site-metrics/visit',{
+      method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:visitId,cache:'no-store',credentials:'omit'
+    });
+    if(!response.ok)throw new Error('站点统计暂不可用');
+    const data=await response.json();
+    if(!data?.success||!Number.isSafeInteger(data.pageViews)||!Number.isSafeInteger(data.registeredCount))throw new Error('站点统计响应异常');
+    return data;
+  },
+
   // 3. 注册 (对应后端 /api/register)
   async register(username, password, email) {
     return await this.request('/register', 'POST', { username, password, email }, { skipAuth: true });

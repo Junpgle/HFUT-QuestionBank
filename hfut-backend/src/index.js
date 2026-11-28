@@ -1,3 +1,4 @@
+import {registerSiteMetricsRoutes,invalidateRegisteredCount} from './site-metrics.js';
 import {prepareAttemptStats} from './attempt-stats.js';
 import {mergeUserProgress,validateOps} from './progress-merge.js';
 import { Hono } from 'hono'
@@ -70,6 +71,7 @@ app.use('/api/*', async (c, next) => {
     '/api/login',
     '/api/register',
     '/api/onlineCount',
+    '/api/site-metrics/visit',
     '/api/verify-email',
     '/api/password-reset/request',
     '/api/password-reset/confirm',
@@ -457,6 +459,7 @@ app.post('/api/verify-email', async (c) => {
     await c.env.DB.prepare(
         'UPDATE Users SET email_verified = 1, verification_code = NULL, code_expires_at = NULL WHERE id = ?'
     ).bind(user.id).run();
+      invalidateRegisteredCount(c.env.DB);
 
     return c.json({ success: true, message: '账号已激活' });
   } catch (e) {
@@ -917,6 +920,7 @@ app.post('/api/recoverOutageStats', async (c) => c.json({ success: true }));
 // Extension API uses the same /api/* JWT authentication as Question-Bank.
 registerSiteSyncRoutes(app)
 registerLearningRoutes(app);
+registerSiteMetricsRoutes(app);
 registerPasswordResetRoutes(app);
 
 export default app

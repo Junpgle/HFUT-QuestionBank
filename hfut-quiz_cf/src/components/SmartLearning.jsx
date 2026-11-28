@@ -746,10 +746,10 @@ function SmartLearningSession({
                   {waitingToday?<Clock size={28} aria-hidden="true"/>:<CheckCircle2 size={28} aria-hidden="true"/>}
                 </div>
                 <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 [text-wrap:balance]">
-                  {waitingToday?'正在等待巩固间隔':'本轮学习完成'}
+                  {waitingToday?'正在等待巩固间隔':canEarlyRecall?'继续巩固':'本轮学习完成'}
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-slate-400 leading-relaxed [text-wrap:pretty]">
-                  {waitingToday?'正常巩固间隔还剩约 '+waitLabel+'，到时会自动出题。也可以选择继续学习。':pending?'剩余巩固题已安排在后续学习日。':'已自动安排后续复习。'}
+                  {waitingToday?'正常巩固间隔还剩约 '+waitLabel+'，到时会自动出题。也可以选择继续学习。':canEarlyRecall?'剩余题目尚未满足题目间隔，可直接继续巩固，无需等待。':pending?'剩余巩固题已安排在后续学习日。':'已自动安排后续复习。'}
                 </p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2.5">
                   {canEarlyRecall&&<button type="button" className={btnPrimary} disabled={busy} onClick={onEarlyRecall}>提前巩固</button>}

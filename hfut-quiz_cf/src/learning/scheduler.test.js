@@ -118,12 +118,16 @@ test('hard first exposure returns after one other task, slow sessions use time i
  assert.deepEqual(chooseNext({ids,state:replayEvents(normal),now:t+1000}),{id:'c',kind:'intro'});
  assert.deepEqual(chooseNext({ids,state:replayEvents(normal),now:t+FIRST_RECALL_DELAY}),{id:'a',kind:'recall'});
 });
-test('failed recall still respects relearning time and daily attempt cap',()=>{
+test('failed recall returns after two intervening tasks, without a time delay',()=>{
  const ids=['a','b','c','d'],plan={...p,exam:localDay(t)};
  const events=[ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),ev('b','intro',{questionId:'b'},t+1000),ev('c','intro',{questionId:'c'},t+2000),ev('r','rate',{questionId:'a',rating:1},t+3000)];
  const state=replayEvents(events);
  assert.notEqual(chooseNext({ids,state,now:t+4000})?.id,'a');
- assert.equal(state.cards.a.due,t+303000);
+ assert.equal(state.cards.a.due,t+3000);
+ assert.equal(state.cards.a.eligibleStep,state.step+2);
+ const later=[...events,ev('rb','rate',{questionId:'b',rating:3},t+4000),ev('rc','rate',{questionId:'c',rating:3},t+5000)];
+ const after=replayEvents(later);
+ assert.deepEqual(chooseNext({ids,state:after,now:t+5000}),{id:'a',kind:'recall'});
 });
 
 test('question memory stages reflect persisted learning, review, maturity and setbacks',()=>{
@@ -161,4 +165,27 @@ test('optional early recall avoids mandatory idle time without bypassing daily c
  assert.deepEqual(chooseNext({ids:['a','b'],state,now:t+1000,extra:true}),{id:'b',kind:'intro'});
  const capped=replayEvents([ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),...[1,2,3,4].map(i=>ev('r'+i,'rate',{questionId:'a',rating:1},t+i*600000))]);
  assert.equal(chooseEarlyRecall({ids:['a'],state:capped,now:t+2400000}),null);
+});
+
+test('fuzzy recall in learning stage returns after three intervening tasks',()=>{
+ const ids=['a','b','c','d','e','f'],plan={...p,exam:localDay(t)};
+ const events=[ev('p','plan',{plan}),...['a','b','c','d'].map((id,i)=>ev('i'+id,'intro',{questionId:id},t+i*1000)),ev('ra','rate',{questionId:'a',rating:2},t+4000)];
+ const afterFuzzy=replayEvents(events);
+ assert.equal(afterFuzzy.cards.a.eligibleStep,afterFuzzy.step+3);
+ assert.equal(afterFuzzy.cards.a.due,t+4000);
+ for(let i=0;i<3;i++){
+   const state=replayEvents(events);
+   assert.notEqual(chooseNext({ids,state,now:t+5000+i*1000})?.id,'a');
+   events.push(ev('r'+i,'rate',{questionId:['b','c','d'][i],rating:3},t+5000+i*1000));
+ }
+ assert.deepEqual(chooseNext({ids,state:replayEvents(events),now:t+7000}),{id:'a',kind:'recall'});
+});
+test('short queue can alternate pending cards without a clock and single rated card offers early recall',()=>{
+ const plan={...p,exam:localDay(t),reserve:0};
+ const events=[ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),ev('b','intro',{questionId:'b'},t+1000),ev('ra','rate',{questionId:'a',rating:1},t+2000),ev('rb','rate',{questionId:'b',rating:2},t+3000)];
+ const state=replayEvents(events);
+ assert.deepEqual(chooseNext({ids:['a','b'],state,now:t+3000}),{id:'a',kind:'recall'});
+ assert.equal(chooseNext({ids:['b'],state,now:t+3000}),null);
+ assert.equal(nextShortTime(['b'],state,t+3000),null);
+ assert.deepEqual(chooseEarlyRecall({ids:['b'],state,now:t+3000}),{id:'b',kind:'recall'});
 });

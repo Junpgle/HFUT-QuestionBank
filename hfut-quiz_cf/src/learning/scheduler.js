@@ -5,6 +5,8 @@ export const DAY = 86400000;
 export const FIRST_RECALL_DELAY = 30000;
 const FIRST_RECALL_STEPS=2;
 const HARD_FIRST_RECALL_STEPS=1;
+const FAILED_RECALL_STEPS=2;
+const FUZZY_RECALL_STEPS=3;
 const W = [0.4872,1.4003,3.7145,13.8206,5.1618,1.2298,0.8975,0.031,1.6474,0.1367,1.0461,2.1072,0.0793,0.3246,1.587,0.2272,2.8755];
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 export const MODEL = 'fsrs-4.5-qbank-1';
@@ -38,7 +40,7 @@ export function rateCard(card, rating, now, target=0.9) {
     successfulDays:(card.successfulDays||0)+(rating>=3&&card.lastSuccessDay!==localDay(now)?1:0),
     lastSuccessDay:rating>=3?localDay(now):card.lastSuccessDay,
     phase:short?(card.phase==='review'||card.phase==='relearning'?'relearning':'learning'):'review',
-    due:now+(short?(rating===1?5:10)*60000:(initial?1:intervalDays(s,target))*DAY),model:MODEL};
+    due:now+(short?0:(initial?1:intervalDays(s,target))*DAY),model:MODEL};
 }
 export function localDay(t=Date.now()) {
   // All Qbank exam plans use China Standard Time for consistent cross-device study days.
@@ -86,7 +88,7 @@ export function replayEvents(events) {
       const attempts=old.attemptDay===attemptDay?(old.attempts||0)+1:1;
       const next=rateCard(old,e.rating,e.at,plan?.target??.9);
       const defer=attempts>=4 && next.phase!=='review';
-      cards[id]={...next,attemptDay,attempts,eligibleStep:step+3,due:defer?Math.max(next.due,nextDay(e.at)):next.due};
+      cards[id]={...next,attemptDay,attempts,eligibleStep:step+(e.rating===1?FAILED_RECALL_STEPS:FUZZY_RECALL_STEPS),due:defer?Math.max(next.due,nextDay(e.at)):next.due};
       const row=activity[attemptDay]??={new:0,attempts:0,success:0,crossDay:0,crossSuccess:0};
       row.attempts++;if(e.rating>=3)row.success++;
       (byQuestion[id]??=[]).push({day:attemptDay,kind:'rate',at:e.at,rating:e.rating,crossDay:old.phase==='review'&&localDay(old.lastReview)!==attemptDay});
@@ -125,9 +127,11 @@ export function questionMemoryStage(card,now){
 const firstRecall=c=>c?.phase==='learning'&&!c.lastReview&&!c.stability;
 const canRetryToday=(c,now)=>c.attemptDay!==localDay(now)||c.attempts<4;
 export function nextShortTime(ids,state,now){
-  const times=ids.map(id=>state.cards[id]).filter(c=>c&&c.phase!=='review').map(c=>{
-    if(firstRecall(c))return c.due;
-    return Math.max(c.due,(c.lastReview||c.firstSeen)+180000,canRetryToday(c,now)?0:nextDay(now));
+  const times=ids.map(id=>state.cards[id]).filter(c=>c&&c.phase!=='review').flatMap(c=>{
+    if(!canRetryToday(c,now))return [Math.max(c.due,nextDay(now))];
+    if(firstRecall(c)||c.due>now)return [c.due];
+    // Rated short steps are task-based, not waiting for a wall-clock deadline.
+    return [];
   });
   return times.length?Math.min(...times):null;
 }
@@ -164,15 +168,20 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   if(due.length&&(!allowNew||step%2===1))return {id:due[0],kind:'review'};
   if(allowNew)return {id:fresh,kind:'intro'};
   if(due.length)return {id:due[0],kind:'review'};
-  // With no other work, first exposure needs only its short time delay.
-  // Later failed/hard attempts retain their original relearning intervals.
-  const fallback=ids.filter(id=>{
-    const c=cards[id];return c&&c.phase!=='review'&&c.due<=now&&canRetryToday(c,now)&&(firstRecall(c)||now-(c.lastReview||c.firstSeen)>=180000);
-  }).sort((a,b)=>cards[a].due-cards[b].due);
-  if(fallback.length)return {id:fallback[0],kind:'recall'};
-  // Single-question review sessions must still be usable on the next day.
+  // A due cross-day review takes precedence over shortening same-day spacing.
   const single=ids.find(id=>id===lastId&&isReviewDue(cards[id],plan,now));
-  return single?{id:single,kind:'review'}:null;
+  if(single)return {id:single,kind:'review'};
+  // If no other planned work remains, shorten the gap for a *different*
+  // pending question rather than forcing a timed wait. Never auto-repeat
+  // the very same rated card; explicit early recall remains available.
+  const fallback=candidates.filter(id=>{
+    const c=cards[id];
+    return c&&c.phase!=='review'&&!firstRecall(c)&&c.due<=now&&canRetryToday(c,now);
+  }).sort((a,b)=>cards[a].eligibleStep-cards[b].eligibleStep||cards[a].due-cards[b].due);
+  if(fallback.length)return {id:fallback[0],kind:'recall'};
+  // Single first exposure can still return after its short time delay.
+  const introFallback=ids.find(id=>firstRecall(cards[id])&&cards[id].due<=now&&canRetryToday(cards[id],now));
+  return introFallback?{id:introFallback,kind:'recall'}:null;
 }
 
 export function scopedActivity(ids,byQuestion){

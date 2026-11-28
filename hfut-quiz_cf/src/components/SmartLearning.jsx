@@ -127,7 +127,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   useEffect(()=>{if(task)scrollRef.current?.scrollTo({top:0});},[task]);
 
   function saveAnswer(answer){const d={...(draftRef.current||draft),answer};draftRef.current=d;setDraft(d);setDraftWarning(!writeDraft(user,subject,d));}
-  function start(extraMode=false,id=null){setInspectId(null);setShowLearnedGrid(false);setSessionQuestionIds([...new Set([...todayIds,...(id?[id]:canResume?[draft.task.id]:[])])]);setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
+  function start(extraMode=false,id=null){setInspectId(null);setShowLearnedGrid(false);setSessionQuestionIds([...new Set([...todayIds,...(id?[id]:canResume?[draft.task.id]:[])])]);setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?.pendingRelearn?'relearn':state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
   async function download(){try{const current=await loadLearning(user,subject);const url=URL.createObjectURL(new Blob([JSON.stringify(makeBackup(subject,current.events),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='Qbank-智能学习-'+subject+'-'+localDay()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError('备份导出失败');}}
   async function readBackup(e){const file=e.target.files?.[0];e.target.value='';if(!file)return;try{if(file.size>LIMIT)throw Error('备份文件超过 20 MB 上限');setBackupPreview(parseBackup(await file.text(),subject,all.map(q=>q.id)));setError('');}catch(err){setBackupPreview(null);setError(err.message||'备份格式错误');}}
   async function restore(){if(lock.current||!backupPreview)return;lock.current=true;setBusy(true);try{const next=await importLearning(user,subject,backupPreview);setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));const p=replayEvents(next.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}setBackupPreview(null);setSyncMessage('备份已合并，本地已有事件未覆盖');}catch{setError('备份导入失败，原数据未清除');}finally{lock.current=false;setBusy(false);}}
@@ -214,8 +214,8 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         onDone={async rating=>{
           const snapAnswer={...(draftRef.current||draft)?.answer};
           const snap={task,q,answer:snapAnswer,rating};
-          const e=task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating});
-          const ok=await commit(e,learningAttempt(q,task,snapAnswer,rating,e));
+          const e=task.kind==='relearn'?event('intro',{questionId:q.id,relearnOf:state.cards[q.id]?.pendingRelearn}):task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating,...(rating===1&&snapAnswer.relearning?{relearned:true}:{})});
+          const ok=await commit(e,task.kind==='relearn'?null:learningAttempt(q,task,snapAnswer,rating,e));
           if(ok&&alive.current){setHistory(prev=>[...prev.slice(-49),snap]);setHistoryIndex(null);setInspectId(null);}
           return ok;
         }}
@@ -847,8 +847,8 @@ function SmartLearningQuestion({
 }){
   const intro=task.kind==='intro';
   const selected=answer.selected||[],inputs=answer.inputs||[],result=answer.result||null;
-  const relearning=!isHistory&&!intro&&answer.relearning===true;
-  const show=isHistory||intro||result!==null;
+  const relearning=!isHistory&&(task.kind==='relearn'||(!intro&&answer.relearning===true));
+  const show=isHistory||intro||relearning||result!==null;
   const big=q.type==='big';
   const patch=p=>{if(!busy&&!isHistory)onAnswer({...answer,...p});};
   const chooseRating=rating=>{
@@ -923,7 +923,7 @@ function SmartLearningQuestion({
   });
 
   const kbdClass='hidden md:inline-flex items-center justify-center rounded-md border px-1.5 py-0.5 text-[10px] font-mono font-bold leading-none opacity-75';
-  const ratingText=isInspection&&historyRating==null?'已学习':intro?(historyRating===1?'比较难记':'已记忆'):({1:'忘记 / 蒙对',2:'模糊',3:'记得',4:'很熟悉'}[historyRating]||'已记录');
+  const ratingText=isInspection&&historyRating==null?'已学习':task.kind==='relearn'?'已重新记忆':intro?(historyRating===1?'比较难记':'已记忆'):({1:'忘记 / 蒙对',2:'模糊',3:'记得',4:'很熟悉'}[historyRating]||'已记录');
 
   const mobileControls=isHistory?(
     <div className="flex items-center gap-2 w-full">

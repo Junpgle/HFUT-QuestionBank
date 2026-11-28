@@ -21,8 +21,8 @@ export function parseBackup(raw,subject,ids,now=Date.now()){
       events.push({...base,plan:{exam:p.exam,reserve:p.reserve,scope:p.scope,target:p.target??.9}});
     }else{
       if(!validIds.has(e.questionId))throw Error('备份含当前题库不存在的题目，请先恢复相应题库版本');
-      if(e.kind==='intro')events.push({...base,questionId:e.questionId,...(e.difficult===true?{difficult:true}:{})});
-      else if(e.kind==='rate'&&[1,2,3,4].includes(e.rating))events.push({...base,questionId:e.questionId,rating:e.rating,...(e.source==='practice'?{source:'practice'}:{})});
+      if(e.kind==='intro')events.push({...base,questionId:e.questionId,...(e.difficult===true?{difficult:true}:{}),...(uuid.test(e.relearnOf||'')?{relearnOf:e.relearnOf}:{})});
+      else if(e.kind==='rate'&&[1,2,3,4].includes(e.rating))events.push({...base,questionId:e.questionId,rating:e.rating,...(e.source==='practice'?{source:'practice'}:{}),...(e.rating===1&&e.relearned===true?{relearned:true}:{})});
       else throw Error('备份学习事件无效');
     }
   }

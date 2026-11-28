@@ -73,6 +73,13 @@ export function replayEvents(events) {
     if(e.kind==='plan'){plan=e.plan;continue;}
     const id=e.questionId;
     if(e.kind==='intro'){
+      if(e.relearnOf){
+        const old=cards[id];
+        if(!old||old.phase==='review'||old.pendingRelearn!==e.relearnOf)continue;
+        step++;lastId=id;
+        cards[id]={...old,pendingRelearn:null,relearnedAt:e.at,eligibleStep:step+FAILED_RECALL_STEPS,due:Math.max(old.due,e.at)};
+        continue;
+      }
       if(cards[id])continue;
       step++;lastId=id;
       const d=localDay(e.at);
@@ -88,7 +95,7 @@ export function replayEvents(events) {
       const attempts=old.attemptDay===attemptDay?(old.attempts||0)+1:1;
       const next=rateCard(old,e.rating,e.at,plan?.target??.9);
       const defer=attempts>=4 && next.phase!=='review';
-      cards[id]={...next,attemptDay,attempts,eligibleStep:step+(e.rating===1?FAILED_RECALL_STEPS:FUZZY_RECALL_STEPS),due:defer?Math.max(next.due,nextDay(e.at)):next.due};
+      cards[id]={...next,pendingRelearn:e.rating===1&&!e.relearned?e.id:null,relearnedAt:e.rating===1&&e.relearned?e.at:null,attemptDay,attempts,eligibleStep:step+(e.rating===1?FAILED_RECALL_STEPS:FUZZY_RECALL_STEPS),due:defer?Math.max(next.due,nextDay(e.at)):next.due};
       const row=activity[attemptDay]??={new:0,attempts:0,success:0,crossDay:0,crossSuccess:0};
       row.attempts++;if(e.rating>=3)row.success++;
       (byQuestion[id]??=[]).push({day:attemptDay,kind:'rate',at:e.at,rating:e.rating,crossDay:old.phase==='review'&&localDay(old.lastReview)!==attemptDay});
@@ -117,6 +124,7 @@ export function memoryLevel(card,now){
 export const MEMORY_STAGES=['首次学习','短时巩固','间隔复习','稳定记忆','长期记忆'];
 export function questionMemoryStage(card,now){
   if(!card)return {index:0,label:MEMORY_STAGES[0],detail:'尚未完成首次学习'};
+  if(card.pendingRelearn)return {index:1,label:'待重新学习',detail:'先重新记忆正确答案，再安排独立回忆'};
   if(card.phase==='relearning')return {index:1,label:'重新巩固',detail:'回忆失败后重新建立记忆'};
   if(card.phase!=='review')return {index:1,label:MEMORY_STAGES[1],detail:card.lastReview?'仍需短时强化':'已学习，等待首次独立回忆'};
   const level=memoryLevel(card,now);
@@ -142,22 +150,24 @@ export function chooseEarlyRecall({ids,state,now}){
     const c=state.cards[id];
     return c&&c.phase!=='review'&&canRetryToday(c,now)&&localDay(c.due)<=localDay(now);
   }).sort((a,b)=>Number(a===state.lastId)-Number(b===state.lastId)||state.cards[a].due-state.cards[b].due);
-  return eligible.length?{id:eligible[0],kind:'recall'}:null;
+  return eligible.length?{id:eligible[0],kind:state.cards[eligible[0]].pendingRelearn?'relearn':'recall'}:null;
 }
 export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   const {cards,plan,step,lastId}=state;
   if(!plan)return null;
   const p=dailyPlan(ids,cards,plan,now);
+  const relearn=ids.filter(id=>cards[id]?.pendingRelearn&&cards[id].phase!=='review'&&canRetryToday(cards[id],now)&&cards[id].due<=now).sort((a,b)=>cards[a].lastReview-cards[b].lastReview);
+  if(relearn.length)return {id:relearn[0],kind:'relearn'};
   // Exclude immediate same-day repeats, not the last question from a previous day.
-  const candidates=ids.filter(id=>id!==lastId||(cards[id]&&localDay(cards[id].lastReview||cards[id].firstSeen)!==localDay(now)));
+  const candidates=ids.filter(id=>id!==lastId||(cards[id]&&localDay(cards[id].relearnedAt||cards[id].lastReview||cards[id].firstSeen)!==localDay(now)));
   const short=candidates.filter(id=>{
     const c=cards[id];
-    if(!c||c.phase==='review'||!canRetryToday(c,now))return false;
+    if(!c||c.pendingRelearn||c.phase==='review'||!canRetryToday(c,now))return false;
     // First exposure: spacing by intervening completed tasks OR time, not both.
     // Two normal intervening tasks (one for hard cards) ensure fast learners
     // never have to finish the whole new-card quota before testing recall.
     if(firstRecall(c))return c.eligibleStep<=step||c.due<=now;
-    return c.due<=now&&(c.eligibleStep<=step||localDay(c.lastReview||c.firstSeen)!==localDay(now));
+    return c.due<=now&&(c.eligibleStep<=step||localDay(c.relearnedAt||c.lastReview||c.firstSeen)!==localDay(now));
   });
   short.sort((a,b)=>cards[a].due-cards[b].due);
   const due=candidates.filter(id=>isReviewDue(cards[id],plan,now)).sort((a,b)=>recallProbability(cards[a],now)-recallProbability(cards[b],now));
@@ -177,7 +187,7 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   // the very same rated card; explicit early recall remains available.
   const fallback=candidates.filter(id=>{
     const c=cards[id];
-    return c&&c.phase!=='review'&&!firstRecall(c)&&c.due<=now&&canRetryToday(c,now);
+    return c&&!c.pendingRelearn&&c.phase!=='review'&&!firstRecall(c)&&c.due<=now&&canRetryToday(c,now);
   }).sort((a,b)=>cards[a].eligibleStep-cards[b].eligibleStep||cards[a].due-cards[b].due);
   if(fallback.length)return {id:fallback[0],kind:'recall'};
   // Single first exposure can still return after its short time delay.

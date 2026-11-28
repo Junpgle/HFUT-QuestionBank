@@ -11,8 +11,8 @@ function clean(e,subject){
     return {...base,plan:{exam:p.exam,reserve:p.reserve,scope:p.scope,target:p.target??.9}};
   }
   if(typeof e.questionId!=='string'||e.questionId.length>100||!prefixes[subject].test(e.questionId))throw Error('无效题目 ID');
-  if(e.kind==='intro')return {...base,questionId:e.questionId,...(e.difficult===true?{difficult:true}:{})};
-  if(e.kind==='rate'&&[1,2,3,4].includes(e.rating))return {...base,questionId:e.questionId,rating:e.rating,...(e.source==='practice'?{source:'practice'}:{})};
+  if(e.kind==='intro')return {...base,questionId:e.questionId,...(e.difficult===true?{difficult:true}:{}),...(typeof e.relearnOf==='string'&&/^[a-f0-9-]{36}$/i.test(e.relearnOf)?{relearnOf:e.relearnOf}:{})};
+  if(e.kind==='rate'&&[1,2,3,4].includes(e.rating))return {...base,questionId:e.questionId,rating:e.rating,...(e.source==='practice'?{source:'practice'}:{}),...(e.rating===1&&e.relearned===true?{relearned:true}:{})};
   throw Error('无效事件类型');
 }
 // D1 has a bound-parameter limit; 20 rows per statement stays below 100.

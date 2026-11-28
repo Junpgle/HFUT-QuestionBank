@@ -70,7 +70,7 @@ export default defineConfig({
           },
           // Private learning events must never enter a shared service-worker cache.
           {
-            urlPattern: /\/api\/learning\//i,
+            urlPattern: /\/api\/(?:learning\/|userProgress(?:\?|$)|user\/report-bundle(?:\?|$))/i,
             handler: 'NetworkOnly',
           },
           {

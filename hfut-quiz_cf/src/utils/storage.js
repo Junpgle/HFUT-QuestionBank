@@ -37,6 +37,7 @@ export const safeGet = async (key, fallback = null) => {
         return parsed;
       } catch (parseOrWriteErr) {
         console.warn(`[Storage Migration] 答题数据 ${key} 解析或平移写入 IndexedDB 失败`, parseOrWriteErr);
+        try{return JSON.parse(raw);}catch{return fallback;}
       }
     }
   } catch (err) {
@@ -52,6 +53,9 @@ export const safeSet = async (key, value) => {
     await localforage.setItem(key, value);
   } catch (err) {
     console.warn(`localforage.setItem(${key}) 失败`, err);
+    // Preserve any prior fallback; never delete it after a failed IndexedDB write.
+    try{localStorage.setItem(key,JSON.stringify(value));}catch(fallbackError){console.warn('本地备用保存失败',fallbackError);}
+    return;
   }
 
   // 2. 区分对待写入：若是答题记录或题库等大数据键，我们绝对不在 localStorage 写入任何冗余，

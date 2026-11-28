@@ -32,7 +32,8 @@ test('introduction does not rate memory; dedup and interleave',()=>{
   assert.equal(state.step,1);
   assert.deepEqual(chooseNext({ids:['a','b'],state,now:t,extra:true}),{id:'b',kind:'intro'});
   const rated=replayEvents([ev('a','plan',{plan:p}),intro,ev('c','rate',{questionId:'a',rating:3},t+180000)]);
-  assert.equal(rated.cards.a.phase,'review');
+  assert.equal(rated.cards.a.phase,'learning');
+  assert.equal(rated.cards.a.strengthCount,1);
   assert.equal(rated.cards.a.reps,1);
 });
 test('one-question queue respects short delay then resumes',()=>{
@@ -48,7 +49,7 @@ test('quota catches up on exam day instead of silently discarding unseen cards',
   assert.equal(x.remainingNew,2);
 });
 test('review queue alternates with new cards and includes overdue cards',()=>{
-  const events=[ev('a','plan',{plan:p}),ev('b','intro',{questionId:'x'}),ev('c','rate',{questionId:'x',rating:3},t+180000),ev('d','intro',{questionId:'y'},t+DAY)];
+  const events=[ev('a','plan',{plan:p}),ev('b','intro',{questionId:'x'}),ev('c','rate',{questionId:'x',rating:3},t+180000),ev('c2','rate',{questionId:'x',rating:3},t+240000),ev('c3','rate',{questionId:'x',rating:3},t+360000),ev('d','intro',{questionId:'y'},t+DAY)];
   const state=replayEvents(events);
   const now=t+DAY+180000;
   assert.ok(isReviewDue(state.cards.x,p,now));
@@ -59,7 +60,7 @@ test('calendar day is deterministic across device time zones',()=>{
   assert.equal(dayStart('2026-11-29'),Date.parse('2026-11-28T16:00:00Z'));
 });
 test('same-day successful repeat does not extend the real review',()=>{
-  const initial=[ev('a','plan',{plan:p}),ev('b','intro',{questionId:'x'}),ev('c','rate',{questionId:'x',rating:3},t+180000)];
+  const initial=[ev('a','plan',{plan:p}),ev('b','intro',{questionId:'x'}),ev('c','rate',{questionId:'x',rating:3},t+180000),ev('c2','rate',{questionId:'x',rating:3},t+240000),ev('c3','rate',{questionId:'x',rating:3},t+360000)];
   const before=replayEvents(initial);
   const after=replayEvents([...initial,ev('d','rate',{questionId:'x',rating:4},t+600000)]);
   assert.deepEqual(before.cards.x,after.cards.x);
@@ -92,7 +93,7 @@ test('fast new-card sessions interleave first recall before finishing a ten-card
  const ids=Array.from({length:10},(_,i)=>'q'+i);
  const plan={...p,exam:localDay(t),reserve:0};
  const events=[ev('plan','plan',{plan})],sequence=[];
- for(let i=0;i<20;i++){
+ for(let i=0;i<40;i++){
    let now=Math.max(t+i*1000,events.at(-1).at+1000);const state=replayEvents(events);
    let task=chooseNext({ids,state,now});
    if(!task){assert.equal(dailyPlan(ids,state.cards,plan,now).remainingNew,0);now=Math.max(now,nextShortTime(ids,state,now));task=chooseNext({ids,state,now});}
@@ -108,7 +109,8 @@ test('fast new-card sessions interleave first recall before finishing a ten-card
    {id:'q0',kind:'recall'},{id:'q1',kind:'recall'},{id:'q2',kind:'recall'}
  ]);
  assert.equal(sequence.filter(x=>x.kind==='intro').length,10);
- assert.equal(sequence.filter(x=>x.kind==='recall').length,10);
+ assert.equal(sequence.filter(x=>x.kind==='recall').length,30);
+ assert.ok(ids.every(id=>replayEvents(events).cards[id].phase==='review'));
 });
 test('hard first exposure returns after one other task, slow sessions use time instead',()=>{
  const ids=['a','b','c','d'],plan={...p,exam:localDay(t)};
@@ -153,8 +155,10 @@ test('daily grid uses scoped quota and retains studied and due questions',()=>{
  assert.equal(learningGridStatus(state.cards.a,plan,t),'pending');
  assert.equal(learningGridStatus(undefined,plan,t),'new');
  const rated=replayEvents([ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),ev('r','rate',{questionId:'a',rating:3},t+30000)]);
- assert.equal(learningGridStatus(rated.cards.a,plan,t+30000),'complete');
- assert.equal(learningGridStatus(rated.cards.a,plan,t+DAY+30000),'due');
+ assert.equal(learningGridStatus(rated.cards.a,plan,t+30000),'pending');
+ const graduated=replayEvents([ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),ev('r','rate',{questionId:'a',rating:3},t+30000),ev('r2','rate',{questionId:'a',rating:3},t+90000),ev('r3','rate',{questionId:'a',rating:3},t+210000)]);
+ assert.equal(learningGridStatus(graduated.cards.a,plan,t+210000),'complete');
+ assert.equal(learningGridStatus(graduated.cards.a,plan,t+DAY+210000),'due');
 });
 
 test('optional early recall avoids mandatory idle time without bypassing daily cap',()=>{
@@ -206,7 +210,8 @@ test('legacy unresolved failures require one explicit relearn before another rec
  assert.deepEqual(chooseNext({ids:['a','b','c'],state:confirmed,now:t+2000}),{id:'b',kind:'intro'});
  const passed=replayEvents([...events,ev('s','rate',{questionId:'a',rating:3},t+3000)]);
  assert.equal(passed.cards.a.pendingRelearn,null);
- assert.equal(passed.cards.a.phase,'review');
+ assert.equal(passed.cards.a.phase,'learning');
+ assert.equal(passed.cards.a.strengthCount,1);
  const modern=replayEvents([events[0],events[1],{...events[2],relearned:true}]);
  assert.equal(modern.cards.a.pendingRelearn,null);
 });
@@ -221,4 +226,33 @@ test('historical relearning is interleaved with recall, not a large separate bat
    events.push(ev('c'+i,'intro',{questionId:task.id,relearnOf:'f'+task.id},t+10000+i*1000));
  }
  assert.deepEqual(chooseNext({ids,state:replayEvents(events),now:t+13000}),{id:'a',kind:'recall'});
+});
+
+test('legacy one-pass mastery is recalculated; unspaced repeats never graduate a card',()=>{
+ const plan={...p,exam:localDay(t+10*DAY),reserve:0};
+ const base=[ev('p','plan',{plan}),ev('i','intro',{questionId:'a'}),ev('r1','rate',{questionId:'a',rating:4},t+1000)];
+ const old=replayEvents(base);
+ assert.equal(old.cards.a.phase,'learning');assert.equal(old.cards.a.strengthCount,1);
+ assert.equal(old.cards.a.eligibleStep,old.step+7);
+ assert.equal(chooseNext({ids:['a'],state:old,now:t+1001}),null);
+ assert.equal(chooseEarlyRecall({ids:['a'],state:old,now:t+1001}),null);
+ assert.equal(nextShortTime(['a'],old,t+1001),t+61000);
+ const immediate=replayEvents([...base,ev('r2','rate',{questionId:'a',rating:4},t+2000),ev('r3','rate',{questionId:'a',rating:4},t+3000)]);
+ assert.equal(immediate.cards.a.strengthCount,1);
+ const past=[...base,ev('r2','rate',{questionId:'a',rating:3},t+DAY),ev('r3','rate',{questionId:'a',rating:3},t+2*DAY)];
+ const completed=replayEvents(past);
+ assert.equal(completed.cards.a.strengthCount,3);assert.equal(completed.cards.a.phase,'review');
+ assert.equal(completed.cards.a.successfulDays,3);
+ const failed=replayEvents([...past,ev('f','rate',{questionId:'a',rating:1,relearned:true},t+3*DAY)]);
+ assert.equal(failed.cards.a.strengthCount,0);assert.equal(failed.cards.a.phase,'relearning');
+});
+test('successful rounds do not consume the consecutive-failure allowance and fuzzy review requires recheck',()=>{
+ const plan={...p,exam:localDay(t+10*DAY),reserve:0};
+ const events=[ev('p','plan',{plan}),ev('i','intro',{questionId:'a'}),ev('r1','rate',{questionId:'a',rating:3},t+1000),ev('r2','rate',{questionId:'a',rating:3},t+61000),ev('f','rate',{questionId:'a',rating:2},t+181000),ev('r3','rate',{questionId:'a',rating:3},t+182000)];
+ const passed=replayEvents(events);
+ assert.equal(passed.cards.a.phase,'review');assert.equal(passed.cards.a.failureStreak,0);
+ assert.equal(passed.cards.a.attempts,4);
+ assert.equal(passed.cards.a.strengthCount,3);
+ const fuzzy=replayEvents([...events,ev('rf','rate',{questionId:'a',rating:2},t+DAY+182000)]);
+ assert.equal(fuzzy.cards.a.phase,'relearning');assert.equal(fuzzy.cards.a.strengthCount,2);
 });

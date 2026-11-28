@@ -38,7 +38,7 @@ test('first exposure, mixed queue, multi-select and uncommitted draft survive re
   await expect(page.getByRole('status').filter({hasText:'回答正确'})).toBeVisible();
   await button(page,'记得').click();
   await returnPlan(page);
-  await expect(page.getByText(/进入复习 1 题/)).toBeVisible();
+  await expect(page.getByText(/进入复习 0 题/)).toBeVisible();
   expect(await page.evaluate(()=>window.__learningAttempts.map(a=>({id:a.questionId,correct:a.isCorrect,objective:a.objective})))).toEqual([{id:'MG-2',correct:true,objective:true}]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
   expect(errors).toEqual([]);
@@ -47,15 +47,15 @@ test('backup import merges on explicit confirmation and cross-day review hides a
   await open(page);await plan(page);
   const mk=(id,kind,at,fields)=>({id:'00000000-0000-4000-8000-'+String(id).padStart(12,'0'),kind,at,day:'2026-11-27',...fields});
   const old=t.getTime()-86400000;
-  const payload={format:'qbank-smart-learning-v1',subject:'maogai',exportedAt:t.getTime(),events:[mk(1,'intro',old,{questionId:'MG-1'}),mk(2,'rate',old+180000,{questionId:'MG-1',rating:3})]};
+  const payload={format:'qbank-smart-learning-v1',subject:'maogai',exportedAt:t.getTime(),events:[mk(1,'intro',old,{questionId:'MG-1'}),mk(2,'rate',old+180000,{questionId:'MG-1',rating:3}),mk(3,'rate',old+240000,{questionId:'MG-1',rating:3}),mk(4,'rate',old+360000,{questionId:'MG-1',rating:3})]};
   await button(page,'学习记录备份 / 恢复').click();
   await page.locator('input[type=file]').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(payload))});
-  await expect(page.getByText(/已验证 2 条事件/)).toBeVisible();
+  await expect(page.getByText(/已验证 4 条事件/)).toBeVisible();
   await button(page,'确认合并').click();
   await expect(page.getByRole('status').filter({hasText:'备份已合并'}).filter({visible:true})).toBeVisible();
   await expect(page.getByText(/进入复习 1 题/)).toBeVisible();
   await button(page,'开始今日学习').click();
-  // Queue starts with one new card (step=2), then alternates to old review (step=3).
+  // Queue starts with one new card, then alternates to old review.
   await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();
   await button(page,'已记忆，继续').click();
   await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
@@ -95,7 +95,7 @@ test('fill and short answer drafts, grading and self assessment',async({page})=>
   await expect(page.getByText('参考要点辛',{exact:true})).toBeVisible();
   await button(page,'模糊').click();
   await returnPlan(page);
-  await expect(page.getByText(/进入复习 1 题/)).toBeVisible();
+  await expect(page.getByText(/进入复习 0 题/)).toBeVisible();
 });
 
 test('quick introductions return to first recall before all new cards are shown',async({page})=>{
@@ -200,4 +200,23 @@ test('waiting for first recall offers explicit early reinforcement or more new c
  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
  await expect(page.getByRole('heading',{name:'参考答案'})).toHaveCount(0);
  expect(await page.evaluate(()=>window.__learningAttempts.length)).toBe(0);
+});
+
+test('legacy one-success card is demoted and shows remaining reinforcement',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await open(page);await plan(page);
+ const old=t.getTime()-86400000;
+ const events=[{id:'00000000-0000-4000-8000-000000000011',kind:'intro',at:old,day:'2026-11-27',questionId:'MG-1'},
+ {id:'00000000-0000-4000-8000-000000000012',kind:'rate',at:old+180000,day:'2026-11-27',questionId:'MG-1',rating:4}];
+ await button(page,'学习记录备份 / 恢复').click();
+ await page.locator('input[type=file]').setInputFiles({name:'legacy.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({format:'qbank-smart-learning-v1',subject:'maogai',exportedAt:t.getTime(),events}))});
+ await button(page,'确认合并').click();
+ await expect(page.getByText(/进入复习 0 题/)).toBeVisible();
+ await button(page,'开始今日学习').click();
+ await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
+ await expect(page.getByLabel('短时强化 1/3')).toBeVisible();
+ await page.getByRole('button',{name:/正确选项甲/}).click();
+ await button(page,'很熟悉').click();
+ await returnPlan(page);
+ await expect(page.getByText(/进入复习 0 题/)).toBeVisible();
+ expect(await page.evaluate(()=>window.__learningAttempts.length)).toBe(1);
 });

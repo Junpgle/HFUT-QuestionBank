@@ -166,10 +166,11 @@ export function questionMemoryStage(card,now){
 const firstRecall=c=>c?.phase==='learning'&&!c.lastReview&&!c.stability;
 export const canRetryToday=(c,now)=>c?.deferredDay!==localDay(now);
 export function nextShortTime(ids,state,now){
-  const times=ids.map(id=>state.cards[id]).filter(c=>c&&c.phase!=='review').flatMap(c=>{
+  const times=ids.flatMap(id=>{
+    const c=state.cards[id];if(!c||c.phase==='review')return [];
     if(!canRetryToday(c,now))return [Math.max(c.due,nextDay(now))];
     if(firstRecall(c)||c.due>now)return [c.due];
-    if(c.minRecallAt>now&&!hasStrengthSpacing(c,state.step,state.lastId,ids.find(id=>state.cards[id]===c),now))return [c.minRecallAt];
+    if(c.minRecallAt>now&&!hasStrengthSpacing(c,state.step,state.lastId,id,now))return [c.minRecallAt];
     // Rated short steps are task-based, not waiting for a wall-clock deadline.
     return [];
   });

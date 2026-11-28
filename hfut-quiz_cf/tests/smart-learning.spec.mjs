@@ -137,6 +137,11 @@ test('desktop daily question grid highlights current question and revisits histo
  await button(page,'已记忆，继续').click();
  await expect(grid.getByRole('button',{name:/第 2 题 · 当前查看/})).toHaveAttribute('aria-current','true');
  await grid.getByRole('button',{name:/第 1 题 · 待巩固/}).click();
+ const inspected=grid.getByRole('button',{name:/第 1 题 · 当前查看 · 待巩固/});
+ await expect(inspected).toHaveAttribute('data-learning-status','pending');
+ await expect(inspected).toContainText('0/3');
+ await expect(inspected).toHaveClass(/ring-blue-600/);
+ await expect(inspected).toHaveClass(/bg-amber-400/);
  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
  await grid.getByRole('button',{name:/第 2 题 · 未学习/}).click();
  await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();

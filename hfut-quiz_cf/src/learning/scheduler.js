@@ -261,6 +261,10 @@ export function todayQuestionIds({ids,state,now,priorityIds=[]}){
 
 export function learningGridStatus(card,plan,now){
   if(!card)return 'new';
-  if(card.phase!=='review')return 'pending';
+  if(card.phase!=='review'){
+    if(!canRetryToday(card,now)||localDay(card.due)>localDay(now))return 'deferred';
+    if(card.pendingRelearn)return 'relearn';
+    return 'pending';
+  }
   return isReviewDue(card,plan,now)?'due':'complete';
 }

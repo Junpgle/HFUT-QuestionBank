@@ -275,3 +275,15 @@ test('near exam extends consecutive failure allowance but keeps graduation requi
  const six=replayEvents([...events,ev('f5','rate',{questionId:'a',rating:1,relearned:true},t+5000),ev('f6','rate',{questionId:'a',rating:1,relearned:true},t+6000)]);
  assert.equal(chooseEarlyRecall({ids:['a'],state:six,now:t+6000}),null);
 });
+
+test('grid differentiates relearning, daily deferral and ordinary strengthening',()=>{
+ const plan={...p,exam:localDay(t+10*DAY),reserve:0};
+ const intro=[ev('p','plan',{plan}),ev('i','intro',{questionId:'a'})];
+ const failed=replayEvents([...intro,ev('f','rate',{questionId:'a',rating:1},t+1000)]);
+ assert.equal(learningGridStatus(failed.cards.a,plan,t+1000),'relearn');
+ const confirmed=replayEvents([...intro,ev('f','rate',{questionId:'a',rating:1,relearned:true},t+1000)]);
+ assert.equal(learningGridStatus(confirmed.cards.a,plan,t+1000),'pending');
+ const deferred=replayEvents([...intro,...[1,2,3,4].map(i=>ev('f'+i,'rate',{questionId:'a',rating:1,relearned:true},t+i*1000))]);
+ assert.equal(learningGridStatus(deferred.cards.a,plan,t+4000),'deferred');
+ assert.equal(learningGridStatus(deferred.cards.a,plan,t+DAY),'pending');
+});

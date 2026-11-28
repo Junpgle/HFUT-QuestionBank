@@ -70,7 +70,7 @@ export function mergeJournalWrite(stored,previous,next,mode='local',cloud=null,a
   if(mode==='init'){
     // A concurrently opened tab may have already saved a journal during initialization.
     const pending=coalesceOps(stored.pending,next.pending);
-    return {...stored,...next,pending,view:applyOps(mergeLegacy(stored.view,next.view,Infinity),pending)};
+    return {...stored,...next,pending,view:applyOps(stored.view,pending)};
   }
   const pending=coalesceOps(stored.pending,newOps);
   return {...stored,...next,pending,view:applyOps(stored.view,newOps)};

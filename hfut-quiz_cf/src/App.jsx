@@ -529,8 +529,9 @@ function App() {
         if(!manual&&Date.now()<syncRetryRef.current)return null;
         const uid=snapshot.currentUser.id;
         if(String(j.userId)!==String(uid))return null;
-        await journalWriteRef.current;
-        const disk=await localforage.getItem(journalKey(uid)).catch(()=>null);
+        const durable=await journalWriteRef.current;
+        const disk=durable===null?null:await localforage.getItem(journalKey(uid)).catch(()=>null);
+        if(String(api.getCurrentUser()?.id)!==String(uid))return null;
         if(disk?.view&&Array.isArray(disk.pending)&&String(disk.userId)===String(uid)){
             const local=captureProgress();
             const pending=coalesceOps(disk.pending,local.pending.filter(o=>!j.pending.some(x=>x.id===o.id)));
@@ -616,14 +617,16 @@ function App() {
             j={...j,userId:uid};
             try{localStorage.setItem('qbank_progress_owner',String(uid));}catch{}
             const initial=loginProgressRef.current;
-            if(initial&&String(initial.uid)===String(uid)){
+            const hasLoginProgress=initial&&String(initial.uid)===String(uid);
+            if(hasLoginProgress){
                 j.view=reconcileProgress(initial.progress,j.view,j.pending);
                 j.lastPull=Date.now();loginProgressRef.current=null;
             }
             lastPullRef.current=j.lastPull||0;
             // The account journal is the durable source for pending removals and additions after reload.
             applyView(j.view);
-            await persistJournal(j,'init');
+            const stored=await persistJournal(j,hasLoginProgress?'remote':'init',hasLoginProgress?initial.progress:null);
+            if(stored&&journalRef.current===j){journalRef.current=stored;progressDirtyRef.current=!!stored.pending.length;applyView(stored.view);}
             if(cancelled)return;
             setJournalReady(true);
         })().catch(e=>{console.error('进度日志加载失败',e);setSyncStatus('error');setSyncMsg('本地进度日志读取失败');});

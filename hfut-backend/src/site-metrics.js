@@ -12,15 +12,18 @@ async function collectMetrics(db,now,visitId=null){
   if(visitId)statements.push(db.prepare('INSERT INTO SitePageViews(visit_id,day) VALUES(?,?) ON CONFLICT(visit_id) DO NOTHING').bind(visitId,day));
   const offset=statements.length;
   // Scan one aggregate row per day, not the per-visit receipt table.
-  statements.push(db.prepare('SELECT COALESCE(SUM(page_views),0) AS total_views, COALESCE(SUM(CASE WHEN day=? THEN page_views ELSE 0 END),0) AS today_views FROM SiteDailyMetrics').bind(day),
+  statements.push(db.prepare('SELECT COALESCE(SUM(page_views),0) AS total_views, COALESCE(SUM(CASE WHEN day=? THEN page_views ELSE 0 END),0) AS today_views, (SELECT value FROM SystemConfig WHERE key=\'historical_page_views_estimate\') AS historical_estimate FROM SiteDailyMetrics').bind(day),
     db.prepare('SELECT COUNT(*) AS count FROM UserPresence WHERE last_seen>?').bind(threshold));
   if(!useCached)statements.push(db.prepare('SELECT COUNT(*) AS count FROM Users WHERE email_verified=1'));
   const result=await db.batch(statements);
   const registered=useCached?cached.count:Number(result[offset+2]?.results?.[0]?.count||0);
   if(!useCached)registeredCache.set(db,{count:registered,until:now+300000});
   const row=result[offset]?.results?.[0]||{};
-  // Retain daily pageViews for older clients.
-  return {day,pageViews:Number(row.today_views||0),totalPageViews:Number(row.total_views||0),registeredCount:registered,onlineCount:Number(result[offset+1]?.results?.[0]?.count||0)};
+  const rawEstimate=Number(row.historical_estimate??0);
+  const historicalPageViewsEstimate=Number.isSafeInteger(rawEstimate)&&rawEstimate>=0?rawEstimate:0;
+  const measuredPageViews=Number(row.total_views||0);
+  // Keep inferred history separate from measured page-view receipts.
+  return {day,pageViews:Number(row.today_views||0),totalPageViews:measuredPageViews+historicalPageViewsEstimate,measuredPageViews,historicalPageViewsEstimate,registeredCount:registered,onlineCount:Number(result[offset+1]?.results?.[0]?.count||0)};
 }
 export function recordSiteVisit(db,id,now=Date.now()){
   if(typeof id!=='string'||!uuid.test(id))return Promise.reject(Error('invalid visit id'));

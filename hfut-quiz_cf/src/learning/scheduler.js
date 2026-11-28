@@ -148,7 +148,8 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   const {cards,plan,step,lastId}=state;
   if(!plan)return null;
   const p=dailyPlan(ids,cards,plan,now);
-  const candidates=ids.filter(id=>id!==lastId);
+  // Exclude immediate same-day repeats, not the last question from a previous day.
+  const candidates=ids.filter(id=>id!==lastId||(cards[id]&&localDay(cards[id].lastReview||cards[id].firstSeen)!==localDay(now)));
   const short=candidates.filter(id=>{
     const c=cards[id];
     if(!c||c.phase==='review'||!canRetryToday(c,now))return false;

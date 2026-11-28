@@ -632,12 +632,12 @@ function SmartLearningSession({
       if(e.key==='ArrowRight'&&canNext){e.preventDefault();onNext?.();}
     };
     window.addEventListener('keydown',onKey);
-    const waitingToday=waitUntil!=null&&localDay(waitUntil)===localDay(now)&&waitUntil>now;
+    return ()=>window.removeEventListener('keydown',onKey);
+  },[busy,onExit,canPrev,canNext,onPrev,onNext]);
+
+  const waitingToday=waitUntil!=null&&localDay(waitUntil)===localDay(now)&&waitUntil>now;
   const secondsLeft=waitingToday?Math.ceil((waitUntil-now)/1000):0;
   const waitLabel=secondsLeft<60?secondsLeft+' 秒':Math.ceil(secondsLeft/60)+' 分钟';
-
-  return ()=>window.removeEventListener('keydown',onKey);
-  },[busy,onExit,canPrev,canNext,onPrev,onNext]);
 
   return (
     <div className="h-[100dvh] flex flex-col md:flex-row bg-slate-100 dark:bg-slate-900">

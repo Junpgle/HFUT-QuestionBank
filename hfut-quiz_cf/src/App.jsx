@@ -573,6 +573,11 @@ function App() {
                 await writeStats(uid,[],res.statsAck);
                 if(String(api.getCurrentUser()?.id)!==String(uid))return null;
                 statsBuffer.current=statsBuffer.current.filter(s=>!ids.has(s.attemptId));
+                // Invalidate only affected subjects; next ranking visit can refresh normally.
+                for(const subjectId of new Set(stats.map(s=>getQuestionSubjectId(s.questionId)).filter(Boolean))){
+                    delete rankingCacheRef.current[subjectId];
+                    try{localStorage.removeItem('app_ranking_cache_'+subjectId);}catch{}
+                }
             }
             if(payload.progressOps!==null&&(res.progressProtocol!==2||!res.progress||!Array.isArray(res.ack)||ops.some(o=>!res.ack.includes(o.id))))throw Error('普通题库同步协议未更新，请先部署新版后端');
             if(res.onlineCount!==undefined)setOnlineCount(res.onlineCount);

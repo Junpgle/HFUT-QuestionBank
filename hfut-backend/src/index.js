@@ -798,10 +798,10 @@ app.get('/api/getWrongQuestionRanking', async (c) => {
     params.push(limit);
 
     const { results } = await c.env.DB.prepare(querySql).bind(...params).all();
-    const counts=new Map();
+    const counts=new Map();let countsAvailable=true;
     if(results.length){
       const ids=results.map(x=>x.question_id);
-      try{for(let i=0;i<ids.length;i+=90){const chunk=ids.slice(i,i+90);const res=await c.env.DB.prepare('SELECT question_id,COUNT(DISTINCT user_id) AS wrong_users FROM QuestionAttemptReceipts WHERE is_correct=0 AND question_id IN ('+chunk.map(()=>'?').join(',')+') GROUP BY question_id').bind(...chunk).all();for(const row of res.results||[])counts.set(row.question_id,row.wrong_users);}}catch(e){console.warn('新版出错人数尚不可用',e);}
+      try{for(let i=0;i<ids.length;i+=90){const chunk=ids.slice(i,i+90);const res=await c.env.DB.prepare('SELECT question_id,COUNT(DISTINCT user_id) AS wrong_users FROM QuestionAttemptReceipts WHERE is_correct=0 AND question_id IN ('+chunk.map(()=>'?').join(',')+') GROUP BY question_id').bind(...chunk).all();for(const row of res.results||[])counts.set(row.question_id,row.wrong_users);}}catch(e){countsAvailable=false;console.warn('新版出错人数尚不可用',e);}
     }
     c.header('Cache-Control', 'public, max-age=300');
     return c.json({
@@ -812,7 +812,7 @@ app.get('/api/getWrongQuestionRanking', async (c) => {
         questionTitle: item.question_title,
         category: item.category,
         errorCount: item.error_count,
-        trackedWrongUsers: counts.get(item.question_id)??0,
+        ...(countsAvailable?{trackedWrongUsers:counts.get(item.question_id)??0}:{}),
         totalAttempts: item.total_attempts,
         errorRate: item.total_attempts > 0 ? Math.round((item.error_count / item.total_attempts) * 100) : 0,
         optionStats: item.option_stats ? JSON.parse(item.option_stats) : {}

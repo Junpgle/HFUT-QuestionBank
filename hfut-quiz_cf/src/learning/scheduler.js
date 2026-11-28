@@ -175,3 +175,26 @@ export function scopedActivity(ids,byQuestion){
   }
   return out;
 }
+
+
+// Today's planned question IDs, not a fixed answer sequence. New introductions
+// use the same priority as chooseNext; repeated recalls keep the original ID.
+export function todayQuestionIds({ids,state,now,priorityIds=[]}){
+  const {cards,plan,todayCounts}=state;
+  if(!plan)return [];
+  const day=localDay(now),p=dailyPlan(ids,cards,plan,now);
+  const priority=new Map([...new Set(priorityIds)].map((id,i)=>[id,i]));
+  const fresh=[...p.unseen].sort((a,b)=>(priority.get(a)??Infinity)-(priority.get(b)??Infinity)).slice(0,p.remainingNew);
+  const assigned=new Set(fresh);
+  for(const id of ids){
+    const c=cards[id];
+    if(c&&(c.introducedDay===day||c.phase!=='review'||isReviewDue(c,plan,now)||todayCounts[day]?.has(id)||localDay(c.lastReview||c.firstSeen)===day))assigned.add(id);
+  }
+  return ids.filter(id=>assigned.has(id));
+}
+
+export function learningGridStatus(card,plan,now){
+  if(!card)return 'new';
+  if(card.phase!=='review')return 'pending';
+  return isReviewDue(card,plan,now)?'due':'complete';
+}

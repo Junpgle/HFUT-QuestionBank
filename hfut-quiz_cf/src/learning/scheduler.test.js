@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DAY,rateCard,recallProbability,intervalDays,dailyPlan,replayEvents,chooseNext,localDay,isReviewDue,memoryLevel,dayStart,nextShortTime,FIRST_RECALL_DELAY,questionMemoryStage} from './scheduler.js';
+import {DAY,rateCard,recallProbability,intervalDays,dailyPlan,replayEvents,chooseNext,localDay,isReviewDue,memoryLevel,dayStart,nextShortTime,FIRST_RECALL_DELAY,questionMemoryStage,todayQuestionIds,learningGridStatus} from './scheduler.js';
 const t=new Date(2026,10,28,10).getTime();
 const p={exam:'2026-12-15',reserve:3,scope:'all'};
 const ev=(id,kind,fields={},at=t)=>({id,kind,at,day:localDay(at),...fields});
@@ -138,4 +138,17 @@ test('question memory stages reflect persisted learning, review, maturity and se
  const fail=rateCard(card,1,t+DAY);
  assert.equal(questionMemoryStage(fail,t+DAY).index,1);
  assert.equal(questionMemoryStage(fail,t+DAY).label,'重新巩固');
+});
+
+test('daily grid uses scoped quota and retains studied and due questions',()=>{
+ const ids=['a','b','c','d','e','f','g','h','i','j'];
+ const plan={...p,exam:localDay(t+3*DAY),reserve:0};
+ const state=replayEvents([ev('p','plan',{plan}),ev('a','intro',{questionId:'a'})]);
+ const items=todayQuestionIds({ids,state,now:t,priorityIds:['j','i','h']});
+ assert.deepEqual(items,['a','h','i','j']);
+ assert.equal(learningGridStatus(state.cards.a,plan,t),'pending');
+ assert.equal(learningGridStatus(undefined,plan,t),'new');
+ const rated=replayEvents([ev('p','plan',{plan}),ev('a','intro',{questionId:'a'}),ev('r','rate',{questionId:'a',rating:3},t+30000)]);
+ assert.equal(learningGridStatus(rated.cards.a,plan,t+30000),'complete');
+ assert.equal(learningGridStatus(rated.cards.a,plan,t+DAY+30000),'due');
 });

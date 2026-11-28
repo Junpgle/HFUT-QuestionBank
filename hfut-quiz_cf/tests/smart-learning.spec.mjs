@@ -120,3 +120,19 @@ test('memory stage is compact and not duplicated on mobile or desktop',async({pa
     await expect(page.getByText('当前阶段：学习新题',{exact:true})).toHaveCount(0);
   }
 });
+
+test('desktop daily question grid highlights current question and revisits history without changing the active task',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await open(page);await plan(page);
+ await button(page,'开始今日学习').click();
+ const grid=page.getByRole('region',{name:'今日学习题号'});
+ await expect(grid).toBeVisible();
+ await expect(grid.getByRole('button')).toHaveCount(4);
+ await expect(grid.getByRole('button',{name:/第 1 题 · 当前查看/})).toHaveAttribute('aria-current','true');
+ await expect(grid.getByRole('button',{name:/第 2 题 · 未学习/})).toBeDisabled();
+ await button(page,'已记忆，继续').click();
+ await expect(grid.getByRole('button',{name:/第 2 题 · 当前查看/})).toHaveAttribute('aria-current','true');
+ await grid.getByRole('button',{name:/第 1 题 · 待巩固/}).click();
+ await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
+ await grid.getByRole('button',{name:/第 2 题 · 未学习/}).click();
+ await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();
+});

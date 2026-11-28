@@ -25,7 +25,7 @@ import {readDraft,writeDraft,validDraft,cardVersion} from '../learning/session';
 import {learningAttempt} from '../learning/attempt';
 import {ignoreQuizShortcut,optionShortcutIndex} from '../utils/quizShortcuts';
 import {gradeFill,parseFillAnswer} from '../utils/fillAnswer';
-import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY,questionMemoryStage,MEMORY_STAGES} from '../learning/scheduler';
+import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY,questionMemoryStage,MEMORY_STAGES,todayQuestionIds,learningGridStatus} from '../learning/scheduler';
 import {loadLearning,appendLearning,exchangeLearning,makeLearningEvent,unionEvents,scheduleLearningSync,subscribeLearning,importLearning} from '../learning/store';
 
 const surface='rounded-[1.5rem] md:rounded-[2rem] border border-slate-200/90 bg-white p-4 sm:p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900';
@@ -41,6 +41,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   const [editingPlan,setEditingPlan]=useState(false),[showReport,setShowReport]=useState(false),[showBackup,setShowBackup]=useState(false);
   const [active,setActive]=useState(false),[extra,setExtra]=useState(false),[task,setTask]=useState(null),[error,setError]=useState(''),[syncing,setSyncing]=useState(false),[busy,setBusy]=useState(false),[syncMessage,setSyncMessage]=useState('');
   const [history,setHistory]=useState([]),[historyIndex,setHistoryIndex]=useState(null);
+  const [sessionQuestionIds,setSessionQuestionIds]=useState([]);
   const [draft,setDraft]=useState(null),[backupPreview,setBackupPreview]=useState(null),[draftWarning,setDraftWarning]=useState(false);
   const fileRef=useRef(null),scrollRef=useRef(null),draftRef=useRef(null);
   const lock=useRef(false),alive=useRef(true),syncLock=useRef(false),formDirty=useRef(false);
@@ -51,6 +52,14 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   const ids=useMemo(()=>[...new Set(all.filter(q=>!state.plan||state.plan.scope==='all'||q.category===state.plan.scope).map(q=>q.id))],[all,state.plan]);
   const plan=state.plan?dailyPlan(ids,state.cards,state.plan,now):null;
   const priority=useMemo(()=>[...wrongIds,...brushedIds],[wrongIds,brushedIds]);
+  const todayIds=useMemo(()=>todayQuestionIds({ids,state,now,priorityIds:priority}),[ids,state,now,priority]);
+  useEffect(()=>{
+    if(!active)return;
+    setSessionQuestionIds(prev=>{
+      const next=[...new Set([...prev,...todayIds,...(task?[task.id]:[])])].filter(id=>ids.includes(id));
+      return next.length===prev.length&&next.every((id,i)=>id===prev[i])?prev:next;
+    });
+  },[active,todayIds,task,ids]);
 
   useEffect(()=>{
     alive.current=true;
@@ -117,7 +126,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   useEffect(()=>{if(task)scrollRef.current?.scrollTo({top:0});},[task]);
 
   function saveAnswer(answer){const d={...(draftRef.current||draft),answer};draftRef.current=d;setDraft(d);setDraftWarning(!writeDraft(user,subject,d));}
-  function start(extraMode=false,id=null){setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
+  function start(extraMode=false,id=null){setSessionQuestionIds([...new Set([...todayIds,...(id?[id]:canResume?[draft.task.id]:[])])]);setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
   async function download(){try{const current=await loadLearning(user,subject);const url=URL.createObjectURL(new Blob([JSON.stringify(makeBackup(subject,current.events),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='Qbank-智能学习-'+subject+'-'+localDay()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError('备份导出失败');}}
   async function readBackup(e){const file=e.target.files?.[0];e.target.value='';if(!file)return;try{if(file.size>LIMIT)throw Error('备份文件超过 20 MB 上限');setBackupPreview(parseBackup(await file.text(),subject,all.map(q=>q.id)));setError('');}catch(err){setBackupPreview(null);setError(err.message||'备份格式错误');}}
   async function restore(){if(lock.current||!backupPreview)return;lock.current=true;setBusy(true);try{const next=await importLearning(user,subject,backupPreview);setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));const p=replayEvents(next.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}setBackupPreview(null);setSyncMessage('备份已合并，本地已有事件未覆盖');}catch{setError('备份导入失败，原数据未清除');}finally{lock.current=false;setBusy(false);}}
@@ -143,11 +152,16 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
     const canNext=historyIndex!==null;
     const goPrev=()=>{if(!locked&&canPrev)setHistoryIndex(i=>i===null?history.length-1:Math.max(0,i-1));};
     const goNext=()=>{if(!locked&&canNext)setHistoryIndex(i=>i>=history.length-1?null:i+1);};
+    const recent=new Map(history.map((entry,i)=>[entry.task.id,i]));
+    const questionGrid=[...new Set([...sessionQuestionIds,...todayIds,...(task?[task.id]:[])])].filter(id=>ids.includes(id)).map(id=>({id,status:learningGridStatus(state.cards[id],state.plan,now),available:id===task?.id||recent.has(id)}));
+    const selectGrid=id=>{if(locked)return;if(id===task?.id){setHistoryIndex(null);return;}if(recent.has(id))setHistoryIndex(recent.get(id));};
     return (
       <SmartLearningSession
         q={displayQ}
         task={displayTask}
         card={displayQ?state.cards[displayQ.id]:null}
+        questionGrid={questionGrid}
+        onSelectGrid={selectGrid}
         plan={plan}
         due={due}
         pending={pending}
@@ -577,7 +591,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 }
 
 function SmartLearningSession({
-  q,task,card,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,
+  q,task,card,questionGrid,onSelectGrid,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onExit,onDone,
 }){
@@ -628,6 +642,7 @@ function SmartLearningSession({
               </div>
             </div>
           )}
+          {questionGrid.length>0&&<LearningQuestionGrid entries={questionGrid} currentId={q?.id} busy={busy} onSelect={onSelectGrid}/>}
         </div>
 
         <div className="p-4 border-t border-slate-100 text-xs text-center text-slate-400 dark:border-slate-800 dark:text-slate-500">
@@ -711,6 +726,44 @@ function SmartLearningSession({
         </div>
       </div>
     </div>
+  );
+}
+
+function LearningQuestionGrid({entries,currentId,busy,onSelect}){
+  const labels={new:'未学习',pending:'待巩固',due:'待复习',complete:'已完成'};
+  const tones={
+    new:'bg-slate-50 text-slate-400 hover:bg-slate-100 dark:bg-slate-950 dark:text-slate-500 dark:hover:bg-slate-800',
+    pending:'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900/50',
+    due:'bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-900/50',
+    complete:'bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-900/40'
+  };
+  return (
+    <section aria-label="今日学习题号" className="space-y-2.5">
+      <div className="flex items-center justify-between px-1 text-xs font-semibold text-slate-400 dark:text-slate-500">
+        <span>今日题目</span><span className="tabular-nums">{entries.length} 题</span>
+      </div>
+      <div className="grid grid-cols-5 gap-2">
+        {entries.map(({id,status,available},i)=>{
+          const current=id===currentId;
+          const label=labels[status];
+          const accessible='第 '+(i+1)+' 题 · '+(current?'当前查看 · ':'')+label;
+          return (
+            <button key={id} type="button" aria-label={accessible} aria-current={current?'true':undefined}
+              title={accessible+(available?'（点击查看）':'（由智能学习安排）')}
+              disabled={busy||!available} onClick={()=>onSelect(id)}
+              className={'aspect-square rounded-lg text-sm font-bold flex items-center justify-center transition-all disabled:cursor-default '+(current?'bg-blue-600 text-white shadow-md ring-2 ring-blue-200 dark:ring-blue-900/50':tones[status])}>
+              {i+1}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 px-1 text-[10px] text-slate-500 dark:text-slate-400">
+        {[['bg-slate-300','未学习'],['bg-amber-400','待巩固'],['bg-indigo-400','待复习'],['bg-green-500','已完成']].map(([color,label])=>(
+          <span key={label} className="inline-flex items-center gap-1"><span className={'w-2 h-2 rounded-sm '+color} aria-hidden="true"/>{label}</span>
+        ))}
+      </div>
+      <p className="px-1 text-[10px] text-slate-400 dark:text-slate-500">可回顾本轮已学题目，后续题目由智能学习安排。</p>
+    </section>
   );
 }
 

@@ -2,6 +2,7 @@ import localforage from 'localforage';
 import { api } from '../api';
 import { localDay,replayEvents } from './scheduler';
 import {mergeBackup} from './backup';
+import {cardVersion} from './session';
 const db=localforage.createInstance({name:'qbank-smart-learning',storeName:'learning_v1'});
 const key=(user,subject)=>String(user?.id??'guest')+':'+subject;
 const queues=new Map(), exchanges=new Map(), subscribers=new Map();
@@ -38,8 +39,9 @@ export async function updateLearning(user,subject,mutate){
     return next;
   });
 }
-export function appendLearning(user,subject,e){
+export function appendLearning(user,subject,e,expected=null){
   return updateLearning(user,subject,old=>{
+    if(expected){const state=replayEvents(old.events);if(cardVersion(state.cards[e.questionId])!==expected.version||state.plan?.scope!==expected.scope||state.plan?.exam!==expected.exam){const error=Error('题目已在其他窗口或设备更新，请继续最新学习任务');error.code='STALE_CARD';throw error;}}
     // Give successive local events deterministic chronological order even within a millisecond.
     const max=old.events.reduce((n,x)=>x.at<=e.at+1000?Math.max(n,x.at):n,0);
     const at=Math.max(e.at,max+1);

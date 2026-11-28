@@ -8,5 +8,7 @@ export function writeDraft(user,subject,value){
   try{if(value)localStorage.setItem(key(user,subject),JSON.stringify(value));else localStorage.removeItem(key(user,subject));return true;}catch{return false;}
 }
 export function validDraft(draft,ids,cards,plan){
+  const a=draft?.answer;
+  if(a!==undefined&&(!a||typeof a!=='object'||Array.isArray(a)||a.selected!==undefined&&(!Array.isArray(a.selected)||!a.selected.every(Number.isInteger))||a.inputs!==undefined&&(!Array.isArray(a.inputs)||!a.inputs.every(x=>x===null||typeof x==='string'))||a.text!==undefined&&typeof a.text!=='string'||a.result!==undefined&&![null,'correct','wrong','forgot','self'].includes(a.result)))return false;
   return !!draft&&!!plan&&draft.exam===plan.exam&&draft.scope===plan.scope&&ids.includes(draft.task?.id)&&['intro','recall','review'].includes(draft.task.kind)&&draft.version===cardVersion(cards[draft.task.id]);
 }

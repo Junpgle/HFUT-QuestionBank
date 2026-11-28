@@ -35,3 +35,19 @@ jobs:
         run: |
           node --check hfut-backend/src/index.js
           node --check hfut-backend/src/learning-sync.js
+      - name: Install isolated browser test dependency
+        working-directory: hfut-quiz_cf
+        run: npm install --no-save --package-lock=false @playwright/test@1.56.1
+      - name: Install Chromium
+        working-directory: hfut-quiz_cf
+        run: npx playwright install --with-deps chromium
+      - name: Verify smart-learning browser interactions
+        working-directory: hfut-quiz_cf
+        run: npx playwright test --config playwright.learning.config.mjs
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-learning-browser-diagnostics
+          path: hfut-quiz_cf/test-results
+          if-no-files-found: ignore

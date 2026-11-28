@@ -235,7 +235,7 @@ test('legacy one-pass mastery is recalculated; unspaced repeats never graduate a
  assert.equal(old.cards.a.phase,'learning');assert.equal(old.cards.a.strengthCount,1);
  assert.equal(old.cards.a.eligibleStep,old.step+7);
  assert.equal(chooseNext({ids:['a'],state:old,now:t+1001}),null);
- assert.equal(chooseEarlyRecall({ids:['a'],state:old,now:t+1001}),null);
+ assert.deepEqual(chooseEarlyRecall({ids:['a'],state:old,now:t+1001}),{id:'a',kind:'recall'});
  assert.equal(nextShortTime(['a'],old,t+1001),t+61000);
  const immediate=replayEvents([...base,ev('r2','rate',{questionId:'a',rating:4},t+2000),ev('r3','rate',{questionId:'a',rating:4},t+3000)]);
  assert.equal(immediate.cards.a.strengthCount,1);
@@ -262,7 +262,7 @@ test('fuzzy feedback cannot bypass spacing after earlier success',()=>{
  const events=[ev('p','plan',{plan}),ev('i','intro',{questionId:'a'}),ev('r','rate',{questionId:'a',rating:3},t+1000),ev('f','rate',{questionId:'a',rating:2},t+2000)];
  const state=replayEvents(events);
  assert.equal(state.cards.a.strengthCount,1);
- assert.equal(chooseEarlyRecall({ids:['a'],state,now:t+2001}),null);
+ assert.deepEqual(chooseEarlyRecall({ids:['a'],state,now:t+2001}),{id:'a',kind:'recall'});
  const immediate=replayEvents([...events,ev('again','rate',{questionId:'a',rating:4},t+3000)]);
  assert.equal(immediate.cards.a.strengthCount,1);
 });
@@ -288,15 +288,17 @@ test('grid differentiates relearning, daily deferral and ordinary strengthening'
  assert.equal(learningGridStatus(deferred.cards.a,plan,t+DAY),'pending');
 });
 
-test('completed cards bridge a short queue instead of blocking reinforcement',()=>{
+test('short queue permits explicit early recall without forcing already-completed cards',()=>{
  const plan={...p,exam:localDay(t+10*DAY),reserve:0};
  const events=[ev('p','plan',{plan}),ev('ib','intro',{questionId:'b'}),ev('b1','rate',{questionId:'b',rating:3},t+1000),ev('b2','rate',{questionId:'b',rating:3},t+61000),ev('b3','rate',{questionId:'b',rating:3},t+181000),ev('ia','intro',{questionId:'a'},t+182000),ev('a1','rate',{questionId:'a',rating:3},t+212000)];
  const state=replayEvents(events),now=t+213000;
  assert.equal(state.cards.a.strengthCount,1);
- assert.deepEqual(chooseNext({ids:['a','b'],state,now}),{id:'b',kind:'review',bridge:true});
- const bridged=replayEvents([...events,ev('br','rate',{questionId:'b',rating:3},now)]);
- assert.equal(bridged.cards.b.due,state.cards.b.due);
- assert.deepEqual(chooseNext({ids:['a','b'],state:bridged,now}),{id:'a',kind:'recall'});
+ assert.equal(chooseNext({ids:['a','b'],state,now}),null);
+ assert.deepEqual(chooseEarlyRecall({ids:['a','b'],state,now}),{id:'a',kind:'recall'});
+ const early=replayEvents([...events,ev('early','rate',{questionId:'a',rating:3},now)]);
+ assert.equal(early.cards.a.strengthCount,1);
+ assert.equal(early.cards.a.minRecallAt,state.cards.a.minRecallAt);
+ assert.equal(early.cards.b.due,state.cards.b.due);
  assert.equal(chooseNext({ids:['a'],state,now}),null);
  assert.equal(nextShortTime(['a'],state,now),t+272000);
 });

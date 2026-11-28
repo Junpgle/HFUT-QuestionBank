@@ -768,16 +768,16 @@ function SmartLearningSession({
             ):(
               <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] p-6 md:p-10 shadow-sm border border-slate-200 text-center dark:bg-slate-900 dark:border-slate-800">
                 <div className="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
-                  {waitingToday?<Clock size={28} aria-hidden="true"/>:<CheckCircle2 size={28} aria-hidden="true"/>}
+                  {(canEarlyRecall||waitingToday)?<Clock size={28} aria-hidden="true"/>:<CheckCircle2 size={28} aria-hidden="true"/>}
                 </div>
                 <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 [text-wrap:balance]">
-                  {waitingToday?'正在等待巩固间隔':canEarlyRecall?'继续巩固':shortToday?'还有待巩固题目':'本轮学习完成'}
+                  {canEarlyRecall?'继续巩固':waitingToday?'正在等待巩固间隔':shortToday?'还有待巩固题目':'本轮学习完成'}
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-slate-400 leading-relaxed [text-wrap:pretty]">
-                  {waitingToday?'当前范围没有其他可插入的间隔练习，约 '+waitLabel+' 后自动继续。'+(canExtraNew?'也可继续学习新题。':''):canEarlyRecall?'剩余题目尚未满足目标间隔，可直接继续巩固，无需等待。':shortToday?'仍有今日待巩固题目，返回计划可查看学习状态。':pending?'剩余巩固题已安排在后续学习日。':'已自动安排后续复习。'}
+                  {canEarlyRecall?(waitingToday?'建议间隔还剩约 '+waitLabel+'，也可立即巩固；过早的重复答对可能不增加强化次数。':'还有待巩固题目，可直接继续学习，无需等待。'):waitingToday?'约 '+waitLabel+' 后自动继续。':shortToday?'仍有今日待巩固题目，返回计划可查看学习状态。':pending?'剩余巩固题已安排在后续学习日。':'已自动安排后续复习。'}
                 </p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2.5">
-                  {canEarlyRecall&&<button type="button" className={btnPrimary} disabled={busy} onClick={onEarlyRecall}>提前巩固</button>}
+                  {canEarlyRecall&&<button type="button" className={btnPrimary} disabled={busy} onClick={onEarlyRecall}>立即巩固</button>}
                   {canExtraNew&&<button type="button" className={canEarlyRecall?btnSecondary:btnPrimary} disabled={busy} onClick={onExtraNew}>继续学习新题</button>}
                   <button type="button" className={btnSecondary} disabled={busy} onClick={onExit}>返回学习计划</button>
                 </div>
@@ -1097,7 +1097,7 @@ function SmartLearningQuestion({
 
         <div className="hidden md:flex h-full flex-col justify-between bg-white dark:bg-slate-900 rounded-[1.5rem] md:rounded-[2rem] shadow-sm border border-slate-200 dark:border-slate-800 p-5 md:p-6 animate-enter gap-4">
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{isHistory?'历史答题':relearning?'重新记忆':intro?'记忆确认':!show?(task.bridge?'间隔练习':'独立回忆'):'记忆评分'}</span>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{isHistory?'历史答题':relearning?'重新记忆':intro?'记忆确认':!show?'独立回忆':'记忆评分'}</span>
            </div>
 
           <div className="my-auto">

@@ -199,9 +199,9 @@ test('waiting for first recall offers explicit early reinforcement or more new c
  await button(page,'保存学习计划').click();
  await button(page,'开始今日学习').click();
  await button(page,'已记忆，继续').click();
- await expect(page.getByRole('heading',{name:'正在等待巩固间隔'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'继续巩固'})).toBeVisible();
  await expect(button(page,'继续学习新题')).toBeVisible();
- await button(page,'提前巩固').click();
+ await button(page,'立即巩固').click();
  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
  await expect(page.getByRole('heading',{name:'参考答案'})).toHaveCount(0);
  expect(await page.evaluate(()=>window.__learningAttempts.length)).toBe(0);
@@ -258,4 +258,21 @@ test('option shuffle preference can be disabled and persists without resetting p
  await page.locator('label[for="learning-shuffle-options"]').last().click();
  await page.reload();
  await expect(toggle).toBeChecked();
+});
+
+test('one pending card can be recalled immediately while the suggested interval is counting down',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await open(page);
+ await page.getByLabel('考试日期').fill('2026-12-15');
+ await button(page,'保存学习计划').click();
+ await button(page,'开始今日学习').click();
+ await button(page,'已记忆，继续').click();
+ await button(page,'立即巩固').click();
+ await page.getByRole('button',{name:/正确选项甲/}).click();
+ await button(page,'记得').click();
+ await expect(page.getByRole('heading',{name:'继续巩固'})).toBeVisible();
+ await expect(page.getByText(/建议间隔还剩约/)).toBeVisible();
+ await button(page,'立即巩固').click();
+ await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
+ await expect(page.getByLabel('短时强化 1/3')).toBeVisible();
+ await expect(page.getByRole('heading',{name:'参考答案'})).toHaveCount(0);
 });

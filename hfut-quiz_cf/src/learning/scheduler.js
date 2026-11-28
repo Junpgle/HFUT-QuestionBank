@@ -182,8 +182,8 @@ export function chooseEarlyRecall({ids,state,now}){
   if(!state.plan)return null;
   const eligible=ids.filter(id=>{
     const c=state.cards[id];
-    return c&&c.phase!=='review'&&canRetryToday(c,now)&&localDay(c.due)<=localDay(now)&&(c.pendingRelearn||hasStrengthSpacing(c,state.step,state.lastId,id,now));
-  }).sort((a,b)=>Number(a===state.lastId)-Number(b===state.lastId)||state.cards[a].due-state.cards[b].due);
+    return c&&c.phase!=='review'&&canRetryToday(c,now)&&localDay(c.due)<=localDay(now);
+  }).sort((a,b)=>Number(!hasStrengthSpacing(state.cards[a],state.step,state.lastId,a,now))-Number(!hasStrengthSpacing(state.cards[b],state.step,state.lastId,b,now))||Number(a===state.lastId)-Number(b===state.lastId)||state.cards[a].due-state.cards[b].due);
   return eligible.length?{id:eligible[0],kind:state.cards[eligible[0]].pendingRelearn?'relearn':'recall'}:null;
 }
 export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
@@ -234,14 +234,8 @@ export function chooseNext({ids,state,now,extra=false,priorityIds=[]}) {
   if(introFallback)return {id:introFallback,kind:'recall'};
   const delayed=ids.find(id=>{const c=cards[id];return c&&c.phase!=='review'&&!c.pendingRelearn&&c.strengthCount>0&&c.minRecallAt>0&&c.minRecallAt<=now&&c.due<=now&&canRetryToday(c,now);});
   if(delayed)return {id:delayed,kind:'recall'};
-  // If spacing is the only obstacle, use a different already-learned card
-  // as a real intervening retrieval task. Do not introduce extra new cards
-  // or repeatedly rehearse the same card in isolation.
-  const pending=ids.filter(id=>{const c=cards[id];return c&&c.phase!=='review'&&canRetryToday(c,now)&&localDay(c.due)<=localDay(now);});
-  if(pending.length){
-    const bridge=ids.filter(id=>id!==lastId&&cards[id]?.phase==='review').sort((a,b)=>recallProbability(cards[a],now)-recallProbability(cards[b],now)||cards[a].lastReview-cards[b].lastReview)[0];
-    if(bridge)return {id:bridge,kind:'review',bridge:true};
-  }
+  // The user can explicitly recall any remaining same-day card. Never force
+  // unrelated completed cards into the queue just to fill an interval.
   return null;
 }
 

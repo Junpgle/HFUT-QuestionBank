@@ -6,6 +6,8 @@ import {
   Brain,
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Download,
   Flame,
@@ -40,6 +42,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   const [data,setData]=useState(null),[now,setNow]=useState(Date.now()),[exam,setExam]=useState(''),[reserve,setReserve]=useState(3),[scope,setScope]=useState('all'),[target,setTarget]=useState(.9);
   const [editingPlan,setEditingPlan]=useState(false),[showReport,setShowReport]=useState(false),[showBackup,setShowBackup]=useState(false);
   const [active,setActive]=useState(false),[extra,setExtra]=useState(false),[task,setTask]=useState(null),[error,setError]=useState(''),[syncing,setSyncing]=useState(false),[busy,setBusy]=useState(false),[syncMessage,setSyncMessage]=useState('');
+  const [history,setHistory]=useState([]),[historyIndex,setHistoryIndex]=useState(null);
   const [draft,setDraft]=useState(null),[backupPreview,setBackupPreview]=useState(null),[draftWarning,setDraftWarning]=useState(false);
   const fileRef=useRef(null),scrollRef=useRef(null),draftRef=useRef(null);
   const lock=useRef(false),alive=useRef(true),syncLock=useRef(false),formDirty=useRef(false);
@@ -84,7 +87,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 
   function leave(){
     if(user&&!subject.startsWith('custom_'))exchangeLearning(user,subject,'exit').catch(()=>{});
-    if(active){setActive(false);setTask(null);}else onBack();
+    if(active){setActive(false);setTask(null);setHistory([]);setHistoryIndex(null);}else onBack();
   }
 
   useEffect(()=>{
@@ -116,7 +119,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   useEffect(()=>{if(task)scrollRef.current?.scrollTo({top:0});},[task]);
 
   function saveAnswer(answer){const d={...(draftRef.current||draft),answer};draftRef.current=d;setDraft(d);setDraftWarning(!writeDraft(user,subject,d));}
-  function start(extraMode=false,id=null){setExtra(extraMode);setActive(true);if(id){const t={id,kind:state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
+  function start(extraMode=false,id=null){setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
   async function download(){try{const current=await loadLearning(user,subject);const url=URL.createObjectURL(new Blob([JSON.stringify(makeBackup(subject,current.events),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='Qbank-智能学习-'+subject+'-'+localDay()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError('备份导出失败');}}
   async function readBackup(e){const file=e.target.files?.[0];e.target.value='';if(!file)return;try{if(file.size>LIMIT)throw Error('备份文件超过 20 MB 上限');setBackupPreview(parseBackup(await file.text(),subject,all.map(q=>q.id)));setError('');}catch(err){setBackupPreview(null);setError(err.message||'备份格式错误');}}
   async function restore(){if(lock.current||!backupPreview)return;lock.current=true;setBusy(true);try{const next=await importLearning(user,subject,backupPreview);setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));const p=replayEvents(next.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}setBackupPreview(null);setSyncMessage('备份已合并，本地已有事件未覆盖');}catch{setError('备份导入失败，原数据未清除');}finally{lock.current=false;setBusy(false);}}
@@ -133,10 +136,19 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   },[ids,now,state.cards,state.plan]);
 
   if(active){
+    const viewing=historyIndex!==null?history[historyIndex]:null;
+    const displayTask=viewing?viewing.task:task;
+    const displayQ=viewing?viewing.q:q;
+    const displayAnswer=viewing?viewing.answer:(draft?.answer||{});
+    const isHistory=Boolean(viewing);
+    const canPrev=historyIndex===null?history.length>0:historyIndex>0;
+    const canNext=historyIndex!==null;
+    const goPrev=()=>{if(!locked&&canPrev)setHistoryIndex(i=>i===null?history.length-1:Math.max(0,i-1));};
+    const goNext=()=>{if(!locked&&canNext)setHistoryIndex(i=>i>=history.length-1?null:i+1);};
     return (
       <SmartLearningSession
-        q={q}
-        task={task}
+        q={displayQ}
+        task={displayTask}
         plan={plan}
         due={due}
         pending={pending}
@@ -146,10 +158,25 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         busy={locked}
         error={error}
         draftWarning={draftWarning}
-        answer={draft?.answer||{}}
+        answer={displayAnswer}
+        isHistory={isHistory}
+        historyRating={viewing?.rating}
+        historyPos={historyIndex!==null?`${historyIndex+1}/${history.length}`:null}
+        canPrev={canPrev}
+        canNext={canNext}
+        onPrev={goPrev}
+        onNext={goNext}
+        onCurrent={()=>setHistoryIndex(null)}
         onAnswer={saveAnswer}
         onExit={leave}
-        onDone={rating=>{const e=task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating});return commit(e,learningAttempt(q,task,(draftRef.current||draft)?.answer,rating,e));}}
+        onDone={async rating=>{
+          const snapAnswer={...(draftRef.current||draft)?.answer};
+          const snap={task,q,answer:snapAnswer,rating};
+          const e=task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating});
+          const ok=await commit(e,learningAttempt(q,task,snapAnswer,rating,e));
+          if(ok&&alive.current){setHistory(prev=>[...prev.slice(-49),snap]);setHistoryIndex(null);}
+          return ok;
+        }}
       />
     );
   }
@@ -550,21 +577,27 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   );
 }
 
-function SmartLearningSession({q,task,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,onAnswer,onExit,onDone}){
+function SmartLearningSession({
+  q,task,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,
+  isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
+  onAnswer,onExit,onDone,
+}){
   useEffect(()=>{
     const onKey=e=>{
       if(busy||ignoreQuizShortcut(e))return;
-      if(e.key==='Escape'){e.preventDefault();onExit();}
+      if(e.key==='Escape'){e.preventDefault();onExit();return;}
+      if(e.key==='ArrowLeft'&&canPrev){e.preventDefault();onPrev?.();return;}
+      if(e.key==='ArrowRight'&&canNext){e.preventDefault();onNext?.();}
     };
     window.addEventListener('keydown',onKey);
     return ()=>window.removeEventListener('keydown',onKey);
-  },[busy,onExit]);
+  },[busy,onExit,canPrev,canNext,onPrev,onNext]);
 
   const taskMeta=task?.kind==='intro'
-    ?{label:'学习新题',icon:<BookOpen size={14} aria-hidden="true"/>,tone:'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/70'}
+    ?{label:'学习新题',desc:'首次学习，先理解记忆题目与答案',icon:<BookOpen size={14} aria-hidden="true"/>,tone:'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/70'}
     :task?.kind==='review'
-      ?{label:'间隔复习',icon:<RotateCcw size={14} aria-hidden="true"/>,tone:'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/70'}
-      :{label:'即时巩固',icon:<Flame size={14} aria-hidden="true"/>,tone:'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/70'};
+      ?{label:'间隔复习',desc:'到期复习，检验长期记忆保持情况',icon:<RotateCcw size={14} aria-hidden="true"/>,tone:'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/70'}
+      :{label:'即时巩固',desc:'短时强化，巩固刚刚学过或薄弱题目',icon:<Flame size={14} aria-hidden="true"/>,tone:'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/70'};
 
   return (
     <div className="h-[100dvh] flex flex-col md:flex-row bg-slate-100 dark:bg-slate-900">
@@ -657,11 +690,20 @@ function SmartLearningSession({q,task,plan,due,pending,completedReviews,waitUnti
 
             {q?(
               <SmartLearningQuestion
-                key={task.kind+':'+q.id}
+                key={(isHistory?'hist:'+historyPos+':':'')+task.kind+':'+q.id}
                 q={q}
                 task={task}
+                taskMeta={taskMeta}
                 busy={busy}
                 answer={answer}
+                isHistory={isHistory}
+                historyRating={historyRating}
+                historyPos={historyPos}
+                canPrev={canPrev}
+                canNext={canNext}
+                onPrev={onPrev}
+                onNext={onNext}
+                onCurrent={onCurrent}
                 onAnswer={onAnswer}
                 onDone={onDone}
               />
@@ -688,14 +730,18 @@ function SmartLearningSession({q,task,plan,due,pending,completedReviews,waitUnti
   );
 }
 
-function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
+function SmartLearningQuestion({
+  q,task,taskMeta,busy,answer,
+  isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
+  onAnswer,onDone,
+}){
   const intro=task.kind==='intro';
   const selected=answer.selected||[],inputs=answer.inputs||[],result=answer.result||null;
-  const show=intro||result!==null;
+  const show=isHistory||intro||result!==null;
   const big=q.type==='big';
-  const patch=p=>{if(!busy)onAnswer({...answer,...p});};
+  const patch=p=>{if(!busy&&!isHistory)onAnswer({...answer,...p});};
   const submit=(v=selected)=>{
-    if(show||busy||!v.length)return;
+    if(show||busy||isHistory||!v.length)return;
     const a=correctIndices(q);
     patch({selected:v,result:a.length===v.length&&a.every(x=>v.includes(x))?'correct':'wrong'});
   };
@@ -717,7 +763,7 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
 
   useEffect(()=>{
     const onKey=e=>{
-      if(busy||ignoreQuizShortcut(e))return;
+      if(busy||isHistory||ignoreQuizShortcut(e))return;
       const key=e.key;
       if(intro){
         if(key==='Enter'||key===' '){e.preventDefault();onDone();}
@@ -759,20 +805,41 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
   });
 
   const kbdClass='hidden md:inline-flex items-center justify-center rounded-md border px-1.5 py-0.5 text-[10px] font-mono font-bold leading-none opacity-75';
+  const ratingText=intro?(historyRating===1?'比较难记':'已记忆'):({1:'忘记 / 蒙对',2:'模糊',3:'记得',4:'很熟悉'}[historyRating]||'已记录');
 
-  const mobileControls=intro?(
-    <div className="grid grid-cols-2 gap-2 w-full">
-      <button type="button" disabled={busy} onClick={()=>onDone(1)} className="px-3 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-50">
+  const mobileControls=isHistory?(
+    <div className="flex items-center gap-2 w-full">
+      <button type="button" disabled={busy||!canPrev} onClick={onPrev} aria-label="上一题" className="px-3 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-40 inline-flex items-center gap-1 shrink-0">
+        <ChevronLeft size={16} aria-hidden="true"/> 上一题
+      </button>
+      <button type="button" disabled={busy} onClick={onCurrent} className="flex-1 px-3 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-blue-500 to-blue-700 shadow-md disabled:opacity-50">
+        回到当前题
+      </button>
+      <button type="button" disabled={busy||!canNext} onClick={onNext} aria-label="下一题" className="px-3 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-40 inline-flex items-center gap-1 shrink-0">
+        下一题 <ChevronRight size={16} aria-hidden="true"/>
+      </button>
+    </div>
+  ):intro?(
+    <div className="flex items-center gap-2 w-full">
+      <button type="button" disabled={busy||!canPrev} onClick={onPrev} aria-label="上一题" className="px-3 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-40 shrink-0">
+        <ChevronLeft size={16} aria-hidden="true"/>
+      </button>
+      <button type="button" disabled={busy} onClick={()=>onDone(1)} className="flex-1 px-3 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-50">
         比较难记
       </button>
-      <button type="button" disabled={busy} onClick={()=>onDone()} className="px-3 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-blue-500 to-blue-700 shadow-md disabled:opacity-50">
+      <button type="button" disabled={busy} onClick={()=>onDone()} className="flex-1 px-3 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-blue-500 to-blue-700 shadow-md disabled:opacity-50">
         已记忆，继续
       </button>
     </div>
   ):!show?(
-    <button type="button" disabled={busy} onClick={()=>patch({result:big?'self':'forgot'})} className="w-full px-4 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50">
-      {big?'展示参考答案':'忘记了，查看答案'}
-    </button>
+    <div className="flex items-center gap-2 w-full">
+      <button type="button" disabled={busy||!canPrev} onClick={onPrev} aria-label="上一题" className="px-3 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 disabled:opacity-40 inline-flex items-center gap-1 shrink-0">
+        <ChevronLeft size={16} aria-hidden="true"/> 上一题
+      </button>
+      <button type="button" disabled={busy} onClick={()=>patch({result:big?'self':'forgot'})} className="flex-1 px-4 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50">
+        {big?'展示参考答案':'忘记了，查看答案'}
+      </button>
+    </div>
   ):(
     <div className={`grid gap-2 w-full ${ratingButtons.length===1?'grid-cols-1':ratingButtons.length===2?'grid-cols-2':'grid-cols-4'}`}>
       {ratingButtons.map(([r,t,tone])=>(
@@ -783,7 +850,17 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
     </div>
   );
 
-  const desktopControls=intro?(
+  const desktopControls=isHistory?(
+    <div className="flex flex-col gap-3 w-full">
+      <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3.5 py-3 text-center dark:border-slate-700 dark:bg-slate-800/60">
+        <div className="text-xs text-slate-500 dark:text-slate-400">上次评分记录</div>
+        <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100">{ratingText}</div>
+      </div>
+      <button type="button" disabled={busy} onClick={onCurrent} className="w-full min-h-[44px] px-4 py-3 rounded-2xl text-sm font-bold text-white bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 shadow-md transition-all disabled:opacity-50">
+        回到当前学习
+      </button>
+    </div>
+  ):intro?(
     <div className="flex flex-col gap-2.5 w-full">
       <button type="button" disabled={busy} onClick={()=>onDone()} className="w-full min-h-[44px] px-4 py-3.5 rounded-2xl text-sm font-bold text-white bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 shadow-md transition-all disabled:opacity-50 inline-flex items-center justify-between">
         <span>已记忆，继续</span>
@@ -812,6 +889,21 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
 
   return (
     <>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 text-xs font-bold ${taskMeta.tone}`}>
+            {taskMeta.icon}
+            <span>当前阶段：{taskMeta.label}</span>
+          </span>
+          {isHistory&&(
+            <span className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              回顾第 {historyPos} 题
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">{taskMeta.desc}</span>
+      </div>
+
       <div className="grid md:grid-cols-3 gap-4 md:gap-6 items-stretch">
         {big?(
           <div className="md:col-span-2 bg-white rounded-[1.5rem] md:rounded-[2rem] p-5 md:p-8 shadow-sm border border-slate-200 animate-enter h-full flex flex-col dark:bg-slate-900 dark:border-slate-800">
@@ -839,10 +931,10 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
             isAnswered={show}
             selectedIndices={selected}
             fillInputs={inputs}
-            onOptionClick={i=>{if(show||busy)return;if(q.type==='multiple')patch({selected:selected.includes(i)?selected.filter(x=>x!==i):[...selected,i]});else submit([i]);}}
+            onOptionClick={i=>{if(show||busy||isHistory)return;if(q.type==='multiple')patch({selected:selected.includes(i)?selected.filter(x=>x!==i):[...selected,i]});else submit([i]);}}
             onSubmit={()=>submit()}
-            onFillInputChange={(i,v)=>{const next=[...inputs];next[i]=v;patch({inputs:next});}}
-            onFillSubmit={({usedHint}={})=>{if(show||busy)return;patch({usedHint:!!usedHint,result:gradeFill(inputs,parseFillAnswer(q.options?.[0],q.question)).isCorrect?(usedHint?'hint':'correct'):'wrong'});}}
+            onFillInputChange={(i,v)=>{if(isHistory)return;const next=[...inputs];next[i]=v;patch({inputs:next});}}
+            onFillSubmit={({usedHint}={})=>{if(show||busy||isHistory)return;patch({usedHint:!!usedHint,result:gradeFill(inputs,parseFillAnswer(q.options?.[0],q.question)).isCorrect?(usedHint?'hint':'correct'):'wrong'});}}
           />
         )}
 
@@ -852,16 +944,46 @@ function SmartLearningQuestion({q,task,busy,answer,onAnswer,onDone}){
           </div>
         </div>
 
-        <div className="hidden md:flex h-full flex-col justify-between bg-white dark:bg-slate-900 rounded-[1.5rem] md:rounded-[2rem] shadow-sm border border-slate-200 dark:border-slate-800 p-5 md:p-8 animate-enter">
-          <div className="text-xs font-semibold text-slate-400 dark:text-slate-500 text-center border-b border-slate-100 dark:border-slate-800 pb-3">
-            {intro?'学习新题':!show?'独立回忆':'记忆评分'}
+        <div className="hidden md:flex h-full flex-col justify-between bg-white dark:bg-slate-900 rounded-[1.5rem] md:rounded-[2rem] shadow-sm border border-slate-200 dark:border-slate-800 p-5 md:p-6 animate-enter gap-4">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-bold ${taskMeta.tone}`}>
+              {taskMeta.icon}
+              <span>{taskMeta.label}</span>
+            </span>
+            <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
+              {isHistory?`回顾 ${historyPos}`:intro?'新题记忆':!show?'独立回忆':'记忆评分'}
+            </span>
           </div>
-          <div className="my-auto py-4">
+
+          <div className="my-auto">
             {desktopControls}
           </div>
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 text-center border-t border-slate-100 dark:border-slate-800 pt-3 leading-relaxed">
-            {intro?'按 Space / Enter 继续 · 1 难记':!show?'数字键 1-4 或 A-D 选答案 · Space 查看答案':'数字键 1-4 评分 · Space 默认记得'}
-          </p>
+
+          <div className="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-3">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={busy||!canPrev}
+                onClick={onPrev}
+                className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition-all inline-flex items-center justify-center gap-1 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                <ChevronLeft size={14} aria-hidden="true"/>
+                <span>上一题</span>
+              </button>
+              <button
+                type="button"
+                disabled={busy||!canNext}
+                onClick={onNext}
+                className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition-all inline-flex items-center justify-center gap-1 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                <span>下一题</span>
+                <ChevronRight size={14} aria-hidden="true"/>
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 text-center leading-relaxed">
+              {isHistory?'← / → 切换历史题 · Esc 返回计划':intro?'Space 继续 · 1 难记 · ←/→ 切题':!show?'1-4/A-D 选答案 · Space 看答案':'1-4 评分 · Space 记得 · ←/→ 切题'}
+            </p>
+          </div>
         </div>
       </div>
 

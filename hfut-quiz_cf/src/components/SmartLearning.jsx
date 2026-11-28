@@ -850,7 +850,7 @@ function QuestionStageProgress({card,now,isHistory,historyPos,relearning=false})
         ))}
       </div>
       <span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">{stage.index+1}/{MEMORY_STAGES.length}</span>
-      {card&&stage.index===1&&<span aria-label={'短时强化 '+strength+'/'+REQUIRED_STRENGTHENING} className="shrink-0 text-[10px] tabular-nums text-indigo-600 dark:text-indigo-400">强化 {strength}/{REQUIRED_STRENGTHENING}</span>
+      {card&&stage.index===1&&<span aria-label={'短时强化 '+strength+'/'+REQUIRED_STRENGTHENING} className="shrink-0 text-[10px] tabular-nums text-indigo-600 dark:text-indigo-400">强化 {strength}/{REQUIRED_STRENGTHENING}</span>}
       {isHistory&&<span className="ml-auto truncate text-slate-500 dark:text-slate-400">{historyPos?'回顾 '+historyPos:'历史回顾'}</span>}
     </div>
   );

@@ -1,6 +1,6 @@
 import { RELICS_SUBJECT_ID, RELICS_CHAPTERS } from '../utils/culturalRelics.js';
 
-export const CURRENT_APP_VERSION = '5.4.0';
+export const CURRENT_APP_VERSION = '5.4.1';
 export const LEADERBOARD_LIMIT = 50;
 export const GITHUB_BASE = 'https://raw.githubusercontent.com/Junpgle/HFUT---Innovation-and-Entrepreneurship-Question-Bank/refs/heads/main/questions/';
 export const REPORT_URL = '/#/report';

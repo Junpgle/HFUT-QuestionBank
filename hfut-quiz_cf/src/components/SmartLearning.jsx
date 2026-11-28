@@ -42,6 +42,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   const [active,setActive]=useState(false),[extra,setExtra]=useState(false),[task,setTask]=useState(null),[error,setError]=useState(''),[syncing,setSyncing]=useState(false),[busy,setBusy]=useState(false),[syncMessage,setSyncMessage]=useState('');
   const [history,setHistory]=useState([]),[historyIndex,setHistoryIndex]=useState(null);
   const [sessionQuestionIds,setSessionQuestionIds]=useState([]);
+  const [inspectId,setInspectId]=useState(null),[showLearnedGrid,setShowLearnedGrid]=useState(false);
   const [draft,setDraft]=useState(null),[backupPreview,setBackupPreview]=useState(null),[draftWarning,setDraftWarning]=useState(false);
   const fileRef=useRef(null),scrollRef=useRef(null),draftRef=useRef(null);
   const lock=useRef(false),alive=useRef(true),syncLock=useRef(false),formDirty=useRef(false);
@@ -94,7 +95,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 
   function leave(){
     if(user&&!subject.startsWith('custom_'))exchangeLearning(user,subject,'exit').catch(()=>{});
-    if(active){setActive(false);setTask(null);setHistory([]);setHistoryIndex(null);}else onBack();
+    if(active){setActive(false);setTask(null);setHistory([]);setHistoryIndex(null);setInspectId(null);}else onBack();
   }
 
   useEffect(()=>{
@@ -126,7 +127,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   useEffect(()=>{if(task)scrollRef.current?.scrollTo({top:0});},[task]);
 
   function saveAnswer(answer){const d={...(draftRef.current||draft),answer};draftRef.current=d;setDraft(d);setDraftWarning(!writeDraft(user,subject,d));}
-  function start(extraMode=false,id=null){setSessionQuestionIds([...new Set([...todayIds,...(id?[id]:canResume?[draft.task.id]:[])])]);setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
+  function start(extraMode=false,id=null){setInspectId(null);setShowLearnedGrid(false);setSessionQuestionIds([...new Set([...todayIds,...(id?[id]:canResume?[draft.task.id]:[])])]);setExtra(extraMode);setActive(true);setHistory([]);setHistoryIndex(null);if(id){const t={id,kind:state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
   async function download(){try{const current=await loadLearning(user,subject);const url=URL.createObjectURL(new Blob([JSON.stringify(makeBackup(subject,current.events),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='Qbank-智能学习-'+subject+'-'+localDay()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError('备份导出失败');}}
   async function readBackup(e){const file=e.target.files?.[0];e.target.value='';if(!file)return;try{if(file.size>LIMIT)throw Error('备份文件超过 20 MB 上限');setBackupPreview(parseBackup(await file.text(),subject,all.map(q=>q.id)));setError('');}catch(err){setBackupPreview(null);setError(err.message||'备份格式错误');}}
   async function restore(){if(lock.current||!backupPreview)return;lock.current=true;setBusy(true);try{const next=await importLearning(user,subject,backupPreview);setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));const p=replayEvents(next.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}setBackupPreview(null);setSyncMessage('备份已合并，本地已有事件未覆盖');}catch{setError('备份导入失败，原数据未清除');}finally{lock.current=false;setBusy(false);}}
@@ -143,18 +144,31 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   },[ids,now,state.cards,state.plan]);
 
   if(active){
+    const inspectedQ=inspectId&&ids.includes(inspectId)&&state.cards[inspectId]?map.get(inspectId):null;
     const viewing=historyIndex!==null?history[historyIndex]:null;
-    const displayTask=viewing?viewing.task:task;
-    const displayQ=viewing?viewing.q:q;
-    const displayAnswer=viewing?viewing.answer:(draft?.answer||{});
-    const isHistory=Boolean(viewing);
-    const canPrev=historyIndex===null?history.length>0:historyIndex>0;
-    const canNext=historyIndex!==null;
-    const goPrev=()=>{if(!locked&&canPrev)setHistoryIndex(i=>i===null?history.length-1:Math.max(0,i-1));};
-    const goNext=()=>{if(!locked&&canNext)setHistoryIndex(i=>i>=history.length-1?null:i+1);};
+    const inspectedEvent=inspectedQ?(state.byQuestion[inspectedQ.id]||[]).at(-1):null;
+    const displayTask=inspectedQ?{id:inspectedQ.id,kind:inspectedEvent?.kind==='intro'?'intro':'recall'}:viewing?viewing.task:task;
+    const displayQ=inspectedQ||viewing?.q||q;
+    const displayAnswer=inspectedQ?{}:viewing?viewing.answer:(draft?.answer||{});
+    const isHistory=Boolean(inspectedQ||viewing);
+    const returnCurrent=()=>{setInspectId(null);setHistoryIndex(null);};
+    const canPrev=inspectedQ?history.length>0:historyIndex===null?history.length>0:historyIndex>0;
+    const canNext=Boolean(inspectedQ)||historyIndex!==null;
+    const goPrev=()=>{if(locked||!canPrev)return;if(inspectedQ){setInspectId(null);setHistoryIndex(history.length-1);}else setHistoryIndex(i=>i===null?history.length-1:Math.max(0,i-1));};
+    const goNext=()=>{if(locked||!canNext)return;if(inspectedQ)returnCurrent();else setHistoryIndex(i=>i>=history.length-1?null:i+1);};
     const recent=new Map(history.map((entry,i)=>[entry.task.id,i]));
-    const questionGrid=[...new Set([...sessionQuestionIds,...todayIds,...(task?[task.id]:[])])].filter(id=>ids.includes(id)).map(id=>({id,status:learningGridStatus(state.cards[id],state.plan,now),available:id===task?.id||recent.has(id)}));
-    const selectGrid=id=>{if(locked)return;if(id===task?.id){setHistoryIndex(null);return;}if(recent.has(id))setHistoryIndex(recent.get(id));};
+    const dailyIds=[...new Set([...sessionQuestionIds,...todayIds,...(task?[task.id]:[])])].filter(id=>ids.includes(id));
+    // Previously learned questions are browsable even after reloading or starting another session.
+    // Preserve today's numbering and append other learned cards only when requested.
+    const learnedIds=ids.filter(id=>state.cards[id]&&!dailyIds.includes(id));
+    const gridIds=showLearnedGrid?[...dailyIds,...learnedIds]:dailyIds;
+    const questionGrid=gridIds.map(id=>({id,status:learningGridStatus(state.cards[id],state.plan,now),available:id===task?.id||recent.has(id)||Boolean(state.cards[id])}));
+    const selectGrid=id=>{
+      if(locked)return;
+      if(id===task?.id){returnCurrent();return;}
+      if(recent.has(id)){setInspectId(null);setHistoryIndex(recent.get(id));return;}
+      if(state.cards[id]&&map.has(id)){setHistoryIndex(null);setInspectId(id);}
+    };
     return (
       <SmartLearningSession
         q={displayQ}
@@ -162,6 +176,10 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         card={displayQ?state.cards[displayQ.id]:null}
         questionGrid={questionGrid}
         onSelectGrid={selectGrid}
+        showLearnedGrid={showLearnedGrid}
+        onToggleLearnedGrid={()=>setShowLearnedGrid(v=>!v)}
+        olderLearnedCount={learnedIds.length}
+        isInspection={Boolean(inspectedQ)}
         plan={plan}
         due={due}
         pending={pending}
@@ -173,13 +191,13 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         draftWarning={draftWarning}
         answer={displayAnswer}
         isHistory={isHistory}
-        historyRating={viewing?.rating}
+        historyRating={inspectedQ?inspectedEvent?.rating:viewing?.rating}
         historyPos={historyIndex!==null?`${historyIndex+1}/${history.length}`:null}
         canPrev={canPrev}
         canNext={canNext}
         onPrev={goPrev}
         onNext={goNext}
-        onCurrent={()=>setHistoryIndex(null)}
+        onCurrent={returnCurrent}
         onAnswer={saveAnswer}
         onExit={leave}
         onDone={async rating=>{
@@ -187,7 +205,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
           const snap={task,q,answer:snapAnswer,rating};
           const e=task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating});
           const ok=await commit(e,learningAttempt(q,task,snapAnswer,rating,e));
-          if(ok&&alive.current){setHistory(prev=>[...prev.slice(-49),snap]);setHistoryIndex(null);}
+          if(ok&&alive.current){setHistory(prev=>[...prev.slice(-49),snap]);setHistoryIndex(null);setInspectId(null);}
           return ok;
         }}
       />
@@ -591,7 +609,7 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
 }
 
 function SmartLearningSession({
-  q,task,card,questionGrid,onSelectGrid,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,
+  q,task,card,questionGrid,onSelectGrid,showLearnedGrid,onToggleLearnedGrid,olderLearnedCount,isInspection=false,plan,due,pending,completedReviews,waitUntil,now,busy,error,draftWarning,answer,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onExit,onDone,
 }){
@@ -642,7 +660,7 @@ function SmartLearningSession({
               </div>
             </div>
           )}
-          {questionGrid.length>0&&<LearningQuestionGrid entries={questionGrid} currentId={q?.id} busy={busy} onSelect={onSelectGrid}/>}
+          {questionGrid.length>0&&<LearningQuestionGrid entries={questionGrid} currentId={q?.id} busy={busy} onSelect={onSelectGrid} showLearned={showLearnedGrid} onToggleLearned={onToggleLearnedGrid} olderCount={olderLearnedCount}/>}
         </div>
 
         <div className="p-4 border-t border-slate-100 text-xs text-center text-slate-400 dark:border-slate-800 dark:text-slate-500">
@@ -696,6 +714,7 @@ function SmartLearningSession({
                 busy={busy}
                 answer={answer}
                 isHistory={isHistory}
+                isInspection={isInspection}
                 historyRating={historyRating}
                 historyPos={historyPos}
                 canPrev={canPrev}
@@ -729,7 +748,7 @@ function SmartLearningSession({
   );
 }
 
-function LearningQuestionGrid({entries,currentId,busy,onSelect}){
+function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onToggleLearned,olderCount}){
   const labels={new:'未学习',pending:'待巩固',due:'待复习',complete:'已完成'};
   const tones={
     new:'bg-slate-50 text-slate-400 hover:bg-slate-100 dark:bg-slate-950 dark:text-slate-500 dark:hover:bg-slate-800',
@@ -740,7 +759,7 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect}){
   return (
     <section aria-label="今日学习题号" className="space-y-2.5">
       <div className="flex items-center justify-between px-1 text-xs font-semibold text-slate-400 dark:text-slate-500">
-        <span>今日题目</span><span className="tabular-nums">{entries.length} 题</span>
+        <span>{showLearned?'今日及已学题目':'今日题目'}</span><span className="tabular-nums">{entries.length} 题</span>
       </div>
       <div className="grid grid-cols-5 gap-2">
         {entries.map(({id,status,available},i)=>{
@@ -762,7 +781,8 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect}){
           <span key={label} className="inline-flex items-center gap-1"><span className={'w-2 h-2 rounded-sm '+color} aria-hidden="true"/>{label}</span>
         ))}
       </div>
-      <p className="px-1 text-[10px] text-slate-400 dark:text-slate-500">可回顾本轮已学题目，后续题目由智能学习安排。</p>
+      {olderCount>0&&<button type="button" onClick={onToggleLearned} aria-expanded={showLearned} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:border-slate-700 dark:text-blue-400 dark:hover:bg-slate-800">{showLearned?'仅显示今日题目':'查看此前已学题目（'+olderCount+'）'}</button>}
+      <p className="px-1 text-[10px] text-slate-400 dark:text-slate-500">已学题可点击查看，未学题由智能学习安排。</p>
     </section>
   );
 }
@@ -782,13 +802,13 @@ function QuestionStageProgress({card,now,isHistory,historyPos}){
         ))}
       </div>
       <span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">{stage.index+1}/{MEMORY_STAGES.length}</span>
-      {isHistory&&<span className="ml-auto truncate text-slate-500 dark:text-slate-400">回顾 {historyPos}</span>}
+      {isHistory&&<span className="ml-auto truncate text-slate-500 dark:text-slate-400">{historyPos?'回顾 '+historyPos:'历史回顾'}</span>}
     </div>
   );
 }
 
 function SmartLearningQuestion({
-  q,task,card,now,busy,answer,
+  q,task,card,now,busy,answer,isInspection=false,
   isHistory=false,historyRating=null,historyPos=null,canPrev=false,canNext=false,onPrev,onNext,onCurrent,
   onAnswer,onDone,
 }){
@@ -862,7 +882,7 @@ function SmartLearningQuestion({
   });
 
   const kbdClass='hidden md:inline-flex items-center justify-center rounded-md border px-1.5 py-0.5 text-[10px] font-mono font-bold leading-none opacity-75';
-  const ratingText=intro?(historyRating===1?'比较难记':'已记忆'):({1:'忘记 / 蒙对',2:'模糊',3:'记得',4:'很熟悉'}[historyRating]||'已记录');
+  const ratingText=isInspection&&historyRating==null?'已学习':intro?(historyRating===1?'比较难记':'已记忆'):({1:'忘记 / 蒙对',2:'模糊',3:'记得',4:'很熟悉'}[historyRating]||'已记录');
 
   const mobileControls=isHistory?(
     <div className="flex items-center gap-2 w-full">
@@ -910,7 +930,7 @@ function SmartLearningQuestion({
   const desktopControls=isHistory?(
     <div className="flex flex-col gap-3 w-full">
       <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3.5 py-3 text-center dark:border-slate-700 dark:bg-slate-800/60">
-        <div className="text-xs text-slate-500 dark:text-slate-400">上次评分记录</div>
+        <div className="text-xs text-slate-500 dark:text-slate-400">{isInspection&&historyRating==null?'学习记录':'上次评分记录'}</div>
         <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100">{ratingText}</div>
       </div>
       <button type="button" disabled={busy} onClick={onCurrent} className="w-full min-h-[44px] px-4 py-3 rounded-2xl text-sm font-bold text-white bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 shadow-md transition-all disabled:opacity-50">
@@ -971,7 +991,7 @@ function SmartLearningQuestion({
         ):(
           <QuizQuestionPanel
             currentQ={q}
-            isQuiz={!intro&&!(result==='forgot')}
+            isQuiz={!isInspection&&!intro&&!(result==='forgot')}
             isAnswered={show}
             selectedIndices={selected}
             fillInputs={inputs}
@@ -1027,7 +1047,7 @@ function SmartLearningQuestion({
 
       {show&&(
         <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] p-5 md:p-8 shadow-sm border border-slate-200 animate-enter space-y-4 dark:bg-slate-900 dark:border-slate-800">
-          {!intro&&result!=='self'&&(
+          {!intro&&result!==null&&result!=='self'&&(
             <div
               role="status"
               className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-bold ${

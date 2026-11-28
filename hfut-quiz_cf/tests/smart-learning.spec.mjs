@@ -126,7 +126,7 @@ test('desktop daily question grid highlights current question and revisits histo
  await button(page,'开始今日学习').click();
  const grid=page.getByRole('region',{name:'今日学习题号'});
  await expect(grid).toBeVisible();
- await expect(grid.getByRole('button')).toHaveCount(4);
+ await expect(grid.getByRole('button',{name:/第 \d+ 题/})).toHaveCount(5);
  await expect(grid.getByRole('button',{name:/第 1 题 · 当前查看/})).toHaveAttribute('aria-current','true');
  await expect(grid.getByRole('button',{name:/第 2 题 · 未学习/})).toBeDisabled();
  await button(page,'已记忆，继续').click();
@@ -135,4 +135,22 @@ test('desktop daily question grid highlights current question and revisits histo
  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
  await grid.getByRole('button',{name:/第 2 题 · 未学习/}).click();
  await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();
+});
+
+test('learned grid opens persisted questions after reload and keeps active task unchanged',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await open(page);await plan(page);
+ await button(page,'开始今日学习').click();
+ await button(page,'已记忆，继续').click();
+ await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();
+ await page.reload();
+ await button(page,'继续上次学习').click();
+ const grid=page.getByRole('region',{name:'今日学习题号'});
+ await expect(grid.getByRole('button',{name:/第 1 题 · 待巩固/})).toBeEnabled();
+ await grid.getByRole('button',{name:/第 1 题 · 待巩固/}).click();
+ await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'参考答案'})).toBeVisible();
+ await expect(page.getByText('需要重新巩固',{exact:true})).toHaveCount(0);
+ await button(page,'回到当前学习').click();
+ await expect(page.getByRole('heading',{name:'测试多选：第二题'})).toBeVisible();
+ expect(await page.evaluate(()=>window.__learningAttempts.length)).toBe(0);
 });

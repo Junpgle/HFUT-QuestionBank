@@ -25,7 +25,8 @@ export function registerLearningRoutes(app){
       if(!validSubject(subject)||!Array.isArray(events)||events.length>50)throw Error('无效科目或事件数');
       const items=events.map(e=>clean(e,subject));
       if(items.length)await c.env.DB.batch(items.map(e=>c.env.DB.prepare('INSERT INTO LearningEvents(user_id,subject,event_id,payload) VALUES(?,?,?,?) ON CONFLICT(user_id,subject,event_id) DO NOTHING').bind(uid,subject,e.id,JSON.stringify(e))));
-      return c.json({success:true});
+      c.header('Cache-Control','no-store');
+      return c.json({success:true,userId:uid});
     }catch(e){console.error('[learning upload]',e);return c.json({error:'学习事件上传失败'},400);}
   });
   app.get('/api/learning/events',async c=>{
@@ -36,7 +37,7 @@ export function registerLearningRoutes(app){
       const res=await c.env.DB.prepare('SELECT seq,payload FROM LearningEvents WHERE user_id=? AND subject=? AND seq>? ORDER BY seq LIMIT 201').bind(uid,subject,after).all();
       const rows=res.results||[], page=rows.slice(0,200);
       c.header('Cache-Control','no-store');
-      return c.json({success:true,events:page.map(r=>JSON.parse(r.payload)),cursor:page.at(-1)?.seq||after,more:rows.length>200});
+      return c.json({success:true,userId:uid,events:page.map(r=>JSON.parse(r.payload)),cursor:page.at(-1)?.seq||after,more:rows.length>200});
     }catch(e){console.error('[learning pull]',e);return c.json({error:'学习记录暂不可用'},500);}
   });
 }

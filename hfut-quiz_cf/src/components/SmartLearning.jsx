@@ -1,20 +1,21 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowLeft,Brain,CalendarDays,RefreshCw} from 'lucide-react';
 import MemoryReport from './MemoryReport';
-import {Markdown} from './Markdown';
-import {QuizQuestionPanel} from './QuizQuestionPanel';
-import {gradeFill,parseFillAnswer} from '../utils/fillAnswer';
+import LearningQuestion from './LearningQuestion';
+import {makeBackup,parseBackup,LIMIT} from '../learning/backup';
+import {readDraft,writeDraft,validDraft,cardVersion} from '../learning/session';
 import {localDay,dailyPlan,chooseNext,replayEvents,recallProbability,isReviewDue,nextShortTime,scopedActivity,DAY} from '../learning/scheduler';
-import {loadLearning,appendLearning,exchangeLearning,makeLearningEvent,unionEvents,scheduleLearningSync} from '../learning/store';
+import {loadLearning,appendLearning,exchangeLearning,makeLearningEvent,unionEvents,scheduleLearningSync,subscribeLearning,importLearning} from '../learning/store';
 
 const btn='rounded-xl px-4 py-3 font-bold border border-slate-200 dark:border-slate-700';
 const primary='rounded-xl px-4 py-3 font-bold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50';
 const surface='rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 dark:border-slate-800 dark:bg-slate-900';
 const event=makeLearningEvent;
-const correctIndices=q=>Array.isArray(q.rawAnswer)?q.rawAnswer.map(Number):typeof q.rawAnswer==='string'?(q.rawAnswer.match(/[A-H]/gi)||[]).map(x=>x.toUpperCase().charCodeAt(0)-65):[Number(q.rawAnswer)];
 export default function SmartLearning({subject,subjectName,bank,user,wrongIds,brushedIds,onBack}){
   const [data,setData]=useState(null),[now,setNow]=useState(Date.now()),[exam,setExam]=useState(''),[reserve,setReserve]=useState(3),[scope,setScope]=useState('all'),[target,setTarget]=useState(.9);
   const [active,setActive]=useState(false),[extra,setExtra]=useState(false),[task,setTask]=useState(null),[error,setError]=useState(''),[syncing,setSyncing]=useState(false),[busy,setBusy]=useState(false),[syncMessage,setSyncMessage]=useState('');
+  const [draft,setDraft]=useState(null),[backupPreview,setBackupPreview]=useState(null),[draftWarning,setDraftWarning]=useState(false);
+  const fileRef=useRef(null),scrollRef=useRef(null),draftRef=useRef(null);
   const lock=useRef(false),alive=useRef(true),lastSyncAttempt=useRef(''),syncLock=useRef(false),formDirty=useRef(false);
   const all=useMemo(()=>Object.values(bank).flat().filter(q=>q?.id),[bank]);
   const map=useMemo(()=>new Map(all.map(q=>[q.id,q])),[all]);
@@ -25,21 +26,22 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   useEffect(()=>{
     alive.current=true;
     let cancelled=false;
-    loadLearning(user,subject).then(value=>{if(cancelled)return;setData(value);const p=replayEvents(value.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}}).catch(()=>{if(!cancelled)setError('无法读取本地学习记录，请重试。');});
+    loadLearning(user,subject).then(value=>{if(cancelled)return;setData(value);setDraft(readDraft(user,subject));const p=replayEvents(value.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}}).catch(()=>{if(!cancelled)setError('无法读取本地学习记录，请重试。');});
+    const unsubscribe=subscribeLearning(user,subject,()=>loadLearning(user,subject).then(value=>{if(!cancelled)setData(prev=>({...value,events:unionEvents(prev?.events,value.events),cursor:Math.max(prev?.cursor||0,value.cursor||0)}));}).catch(()=>{}));
     const timer=setInterval(()=>setNow(Date.now()),5000);
-    return ()=>{cancelled=true;alive.current=false;clearInterval(timer);};
+    return ()=>{cancelled=true;alive.current=false;clearInterval(timer);unsubscribe();};
   },[subject,user]);
   async function commit(e){
     if(lock.current||!data)return false;
     lock.current=true;setBusy(true);setError('');
-    try{const next=await appendLearning(user,subject,e);if(alive.current){setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));setNow(Date.now());setTask(null);}if(user&&!subject.startsWith('custom_'))scheduleLearningSync(user,subject);if(e.kind==='plan')formDirty.current=false;return true;}
+    try{const next=await appendLearning(user,subject,e);if(alive.current){setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));setNow(Date.now());setTask(null);}if(user&&!subject.startsWith('custom_'))scheduleLearningSync(user,subject);if(e.kind==='plan')formDirty.current=false;else {draftRef.current=null;setDraft(null);writeDraft(user,subject,null);}return true;}
     catch{if(alive.current)setError('本地保存失败，学习进度未提交，请重试。');return false;}
     finally{lock.current=false;if(alive.current)setBusy(false);}
   }
   async function sync(){
     if(syncLock.current||!data||!user)return;
     syncLock.current=true;setSyncing(true);setSyncMessage('');
-    try{lastSyncAttempt.current=data.events.filter(e=>!e.synced).map(e=>e.id).join(',');const next=await exchangeLearning(user,subject);if(alive.current){setData(next);const p=replayEvents(next.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);}setSyncMessage('云端学习记录已合并');}}
+    try{lastSyncAttempt.current=data.events.filter(e=>!e.synced).map(e=>e.id).join(',');const next=await exchangeLearning(user,subject);if(alive.current){setData(prev=>({...next,events:unionEvents(prev?.events,next.events),cursor:Math.max(prev?.cursor||0,next.cursor||0)}));const p=replayEvents(next.events).plan;if(p&&!formDirty.current){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}setSyncMessage('云端学习记录已合并');}}
     catch{if(alive.current)setSyncMessage('云同步暂不可用，本地记录仍保留。');}
     finally{syncLock.current=false;if(alive.current)setSyncing(false);}
   }
@@ -57,10 +59,12 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   },[data,active,user,subject]);
   useEffect(()=>{
     if(active&&!task&&data&&!busy){
+      const resume=draftRef.current||draft;
+      if(validDraft(resume,ids,state.cards,state.plan)){setTask(resume.task);return;}
       const next=chooseNext({ids,state,now,extra,priorityIds:priority});
-      if(next)setTask(next);
+      if(next){const d={task:next,version:cardVersion(state.cards[next.id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);setDraftWarning(!writeDraft(user,subject,d));setTask(next);}
     }
-  },[active,task,data,busy,syncing,ids,state,now,extra,priority]);
+  },[active,task,data,busy,syncing,ids,state,now,extra,priority,draft,user,subject]);
   const covered=ids.filter(id=>state.cards[id]).length;
   const pending=ids.filter(id=>state.cards[id]&&state.cards[id].phase!=='review').length;
   const due=ids.filter(id=>state.plan&&isReviewDue(state.cards[id],state.plan,now)).length;
@@ -71,9 +75,18 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
   const preview=exam?dailyPlan([...new Set(previewIds)],state.cards,{exam,reserve:Math.max(0,Number(reserve)||0)},now):null;
   const probabilities=ids.map(id=>recallProbability(state.cards[id],now)).filter(x=>x!==null);
   const q=task&&map.get(task.id);
+  const canResume=validDraft(draft,ids,state.cards,state.plan);
+  useEffect(()=>{if(task&&draft&&(!validDraft(draft,ids,state.cards,state.plan))&&!busy){draftRef.current=null;setDraft(null);setTask(null);writeDraft(user,subject,null);}},[task,draft,ids,state,busy,user,subject]);
+  useEffect(()=>{if(task)scrollRef.current?.scrollTo({top:0});},[task]);
+  function saveAnswer(answer){const d={...(draftRef.current||draft),answer};draftRef.current=d;setDraft(d);setDraftWarning(!writeDraft(user,subject,d));}
+  function start(extraMode=false,id=null){setExtra(extraMode);setActive(true);if(id){const t={id,kind:state.cards[id]?'recall':'intro'};const d={task:t,version:cardVersion(state.cards[id]),exam:state.plan.exam,scope:state.plan.scope,answer:{}};draftRef.current=d;setDraft(d);writeDraft(user,subject,d);setTask(t);}else {draftRef.current=canResume?draft:null;if(!canResume){setDraft(null);writeDraft(user,subject,null);}setTask(null);}}
+  async function download(){try{const current=await loadLearning(user,subject);const url=URL.createObjectURL(new Blob([JSON.stringify(makeBackup(subject,current.events),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='Qbank-智能学习-'+subject+'-'+localDay() +'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError('备份导出失败');}}
+  async function readBackup(e){const file=e.target.files?.[0];e.target.value='';if(!file)return;try{if(file.size>LIMIT)throw Error('备份文件超过 20 MB 上限');setBackupPreview(parseBackup(await file.text(),subject,all.map(q=>q.id)));setError('');}catch(err){setBackupPreview(null);setError(err.message||'备份格式错误');}}
+  async function restore(){if(lock.current||!backupPreview)return;lock.current=true;setBusy(true);try{const next=await importLearning(user,subject,backupPreview);setData(next);const p=replayEvents(next.events).plan;if(p){setExam(p.exam);setReserve(p.reserve);setScope(p.scope);setTarget(p.target??.9);}setBackupPreview(null);setSyncMessage('备份已合并，本地已有事件未覆盖');}catch{setError('备份导入失败，原数据未清除');}finally{lock.current=false;setBusy(false);}}
   const locked=busy;
-  return <main className="max-w-4xl mx-auto p-4 sm:p-8 space-y-4">
-    <header className="flex flex-wrap items-center gap-3"><button disabled={locked} className={btn} onClick={()=>active?(setActive(false),setTask(null)):onBack()} aria-label="返回"><ArrowLeft size={18}/></button><div className="flex-1"><h1 className="text-2xl font-bold flex items-center gap-2"><Brain/> 智能学习</h1><p className="text-sm text-slate-500">{subjectName}</p></div>{user&&!subject.startsWith('custom_')&&<button disabled={locked||syncing||!data} onClick={sync} className={btn}><RefreshCw className="inline mr-1" size={16}/>{syncing?'同步中':'同步'}</button>}</header>
+  return <div ref={scrollRef} className="h-full overflow-y-auto bg-slate-50 dark:bg-slate-950"><main className="max-w-5xl mx-auto p-3 sm:p-8 pb-24 space-y-4">
+    <header className="flex flex-wrap items-center gap-3 sticky top-0 z-10 py-2 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur"><button disabled={locked} className={btn} onClick={()=>active?(setActive(false),setTask(null)):onBack()} aria-label="返回"><ArrowLeft size={18}/></button><div className="flex-1"><h1 className="text-2xl font-bold flex items-center gap-2"><Brain/> 智能学习</h1><p className="text-sm text-slate-500">{subjectName}</p></div>{user&&!subject.startsWith('custom_')&&<button disabled={locked||syncing||!data} onClick={sync} className={btn}><RefreshCw className="inline mr-1" size={16}/>{syncing?'同步中':'同步'}</button>}</header>
+    {draftWarning&&<p className="text-amber-600 text-sm">当前浏览器无法保存未提交的答题草稿，已提交学习记录不受影响。</p>}
     {error&&<p role="alert" className="text-red-600">{error}</p>}
     {syncMessage&&<p role="status" className="text-sm text-slate-500">{syncMessage}</p>}
     {!data?<p>正在读取学习记录…</p>:<>
@@ -86,24 +99,11 @@ export default function SmartLearning({subject,subjectName,bank,user,wrongIds,br
         <label className="text-sm">学习范围<select value={scope} onChange={e=>{formDirty.current=true;setScope(e.target.value);}} className="block w-full rounded-lg border p-2 bg-transparent dark:bg-slate-900"><option value="all">全部题目</option>{[...new Set(all.map(q=>q.category).filter(Boolean))].map(c=><option key={c}>{c}</option>)}</select></label>
         <label className="text-sm">目标记忆保持率<select value={target} onChange={e=>{formDirty.current=true;setTarget(Number(e.target.value));}} className="block w-full rounded-lg border p-2 bg-transparent dark:bg-slate-900"><option value={.85}>85% · 轻量</option><option value={.9}>90% · 推荐</option><option value={.95}>95% · 高频巩固</option></select></label>
       </div><button className={primary} disabled={locked||!exam||exam<localDay(now)||!Number.isInteger(reserve)||reserve<0||reserve>30} onClick={()=>commit(event('plan',{plan:{exam,reserve,scope,target}}))}>保存学习计划</button>{preview&&<p className="mt-3 text-sm font-medium text-indigo-600 dark:text-indigo-300">计划范围 {previewIds.length} 题 · 每日新题约 {preview.quota} 题 · 实际预留 {preview.reserve} 天{preview.days===0?' · 考试日/紧急冲刺':''}</p>}<p className="text-xs text-slate-500 mt-3">首次直接背题；随后混合出现新题、即时检测及到期复习。按北京时间划分学习日。旧刷题记录用于优先安排确认性学习，不虚构历史记忆数据。</p></section>
-      {plan&&<div className="grid sm:grid-cols-2 gap-3"><button className={primary} disabled={locked} onClick={()=>{setExtra(false);setActive(true);setTask(null);}}>开始 / 继续今日学习</button><button className={btn} disabled={locked||!plan.unseen.length} onClick={()=>{setExtra(true);setActive(true);setTask(null);}}>额外学习新题</button></div>}
+      {plan&&<div className="grid sm:grid-cols-2 gap-3"><button className={primary} disabled={locked} onClick={()=>start(false)}>{canResume?'继续上次学习':'开始今日学习'}</button><button className={btn} disabled={locked||!plan.unseen.length} onClick={()=>start(true)}>额外学习新题</button></div>}
       {plan&&<section className={surface}><h2 className="font-bold mb-3">未来 7 天到期预测</h2><div className="grid grid-cols-7 gap-1 text-center">{Array.from({length:7},(_,i)=>{const day=localDay(now+i*DAY);const count=ids.filter(id=>state.cards[id]?.phase==='review'&&(i===0?isReviewDue(state.cards[id],state.plan,now):localDay(state.cards[id].due)===day)).length;return <div key={day} className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2"><b>{count}</b><p className="text-xs text-slate-500">{day.slice(5)}</p></div>;})}</div></section>}
-      {plan&&<MemoryReport ids={ids} cards={state.cards} activity={activity} bank={map} now={now} exam={state.plan.exam} onPractice={id=>{setExtra(false);setActive(true);setTask({id,kind:state.cards[id]?'recall':'intro'});}}/>}
-      </>:q?<LearningQuestion key={task.kind+':'+q.id} q={q} task={task} busy={locked} onDone={rating=>commit(task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating}))}/>:<section className={surface}><h2 className="text-xl font-bold">{pending?'暂时没有可立即学习的题目':'本轮学习完成'}</h2><p className="my-3 text-slate-500">{pending?(waitUntil&&waitUntil>now?'下次可巩固约 '+Math.ceil((waitUntil-now)/60000)+' 分钟后，可稍后继续。':'待巩固题会在间隔满足后再次出现，可等待或稍后继续。'):'已自动安排后续复习。'}</p><button className={btn} disabled={locked} onClick={()=>{setActive(false);setTask(null);}}>返回计划</button></section>}
+      {plan&&<MemoryReport ids={ids} cards={state.cards} activity={activity} bank={map} now={now} exam={state.plan.exam} onPractice={id=>start(false,id)}/>}
+      <section className={surface}><h2 className="font-bold mb-2">学习记录备份</h2><p className="text-xs text-slate-500 mb-3">导入只合并本课程的学习事件，不覆盖已有事件。请仅导入自己的备份。</p><div className="flex flex-wrap gap-2"><button className={btn} disabled={locked} onClick={download}>导出 JSON</button><button className={btn} disabled={locked} onClick={()=>fileRef.current?.click()}>导入备份</button><input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={readBackup}/></div>{backupPreview&&<div className="mt-3 border rounded-lg p-3"><p className="text-sm mb-2">已验证 {backupPreview.length} 条事件。确认合并至当前{user?'账号':'游客'}的学习记录？</p><div className="flex gap-2"><button className={primary} disabled={locked} onClick={restore}>确认合并</button><button className={btn} onClick={()=>setBackupPreview(null)}>取消</button></div></div>}</section>
+      </>:q?<LearningQuestion key={task.kind+':'+q.id} q={q} task={task} busy={locked} answer={draft?.answer||{}} onAnswer={saveAnswer} onDone={rating=>commit(task.kind==='intro'?event('intro',{questionId:q.id,difficult:rating===1}):event('rate',{questionId:q.id,rating}))}/>:<section className={surface}><h2 className="text-xl font-bold">{pending?'暂时没有可立即学习的题目':'本轮学习完成'}</h2><p className="my-3 text-slate-500">{pending?(waitUntil&&waitUntil>now?'下次可巩固约 '+Math.ceil((waitUntil-now)/60000)+' 分钟后，可稍后继续。':'待巩固题会在间隔满足后再次出现，可等待或稍后继续。'):'已自动安排后续复习。'}</p><button className={btn} disabled={locked} onClick={()=>{setActive(false);setTask(null);}}>返回计划</button></section>}
     </>}
-  </main>;
-}
-function LearningQuestion({q,task,busy,onDone}){
-  const intro=task.kind==='intro';
-  const [selected,setSelected]=useState([]),[inputs,setInputs]=useState([]),[result,setResult]=useState(null);
-  const show=intro||result!==null;
-  const big=q.type==='big';
-  const submit=(v=selected)=>{if(show||!v.length)return;setSelected(v);const a=correctIndices(q);setResult(a.length===v.length&&a.every(x=>v.includes(x))?'correct':'wrong');};
-  const answer=q.type==='fill'?parseFillAnswer(q.options?.[0],q.question).map(x=>x.join(' / ')).join('；'):big?q.options?.join('\n')||String(q.rawAnswer??''):correctIndices(q).map(i=>q.options?.[i]).filter(Boolean).join('；');
-  return <section className="space-y-3"><p className="text-sm font-bold text-indigo-600">{intro?'学习新题':task.kind==='review'?'间隔复习':'即时巩固'} · {q.category}</p>
-    {big?<div className={surface}><h2 className="font-bold text-xl">{q.question}</h2>{!show&&<textarea placeholder="先独立回忆，可在此输入要点" className="w-full border rounded-lg p-3 mt-4 bg-transparent" rows={5}/>}</div>:<QuizQuestionPanel currentQ={q} isQuiz={!intro&&!(result==='forgot')} isAnswered={show} selectedIndices={selected} fillInputs={inputs} onOptionClick={i=>{if(show||busy)return;if(q.type==='multiple')setSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i]);else submit([i]);}} onSubmit={()=>submit()} onFillInputChange={(i,v)=>setInputs(prev=>{const next=[...prev];next[i]=v;return next;})} onFillSubmit={({usedHint}={})=>{if(show)return;setResult(gradeFill(inputs,parseFillAnswer(q.options?.[0],q.question)).isCorrect?(usedHint?'hint':'correct'):'wrong');}}/>}
-    {show&&<div className={surface}>{!intro&&result!=='self'&&<p role="status" className={result==='correct'?'text-emerald-600 font-bold mb-2':'text-amber-600 font-bold mb-2'}>{result==='correct'?'回答正确':result==='hint'?'使用提示后答对':'需要重新巩固'}</p>}<b className="text-emerald-600">正确答案</b><div className="whitespace-pre-wrap mt-2">{answer}</div>{q.explanation&&<div className="mt-3"><Markdown content={q.explanation}/></div>}</div>}
-    {intro?<div className="grid grid-cols-2 gap-2"><button className={btn} disabled={busy} onClick={()=>onDone(1)}>比较难记</button><button className={primary} disabled={busy} onClick={()=>onDone()}>已记忆，继续</button></div>:!show?<button className={btn+' w-full'} disabled={busy} onClick={()=>setResult(big?'self':'forgot')}>{big?'展示参考答案':'忘记了，查看答案'}</button>:
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(result==='wrong'||result==='forgot'?[[1,'重新学习']]:result==='hint'?[[1,'依赖提示'],[2,'模糊']]:[[1,'忘记 / 蒙对'],[2,'模糊'],[3,'记得'],[4,'很熟悉']]).map(([r,t])=><button key={r} disabled={busy} className={r===1?btn:primary} onClick={()=>onDone(r)}>{t}</button>)}</div>}
-  </section>;
+  </main></div>;
 }

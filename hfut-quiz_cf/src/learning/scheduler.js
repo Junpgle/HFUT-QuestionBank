@@ -32,6 +32,8 @@ export function rateCard(card, rating, now, target=0.9) {
   const initial=first || card.phase==='learning' || card.phase==='relearning';
   return {...card,difficulty:d,stability:s,lastReview:now,reps:(card.reps||0)+1,
     lapses:(card.lapses||0)+(rating===1&&!first&&card.phase==='review'?1:0),
+    successfulDays:(card.successfulDays||0)+(rating>=3&&card.lastSuccessDay!==localDay(now)?1:0),
+    lastSuccessDay:rating>=3?localDay(now):card.lastSuccessDay,
     phase:short?(card.phase==='review'||card.phase==='relearning'?'relearning':'learning'):'review',
     due:now+(short?(rating===1?5:10)*60000:(initial?1:intervalDays(s,target))*DAY),model:MODEL};
 }
@@ -102,7 +104,7 @@ export function isReviewDue(card,plan,now){
 export function memoryLevel(card,now){
   if(!card)return 'new';
   if(!card.stability||card.phase!=='review'||recallProbability(card,now)<.8)return 'weak';
-  if(card.stability>=30&&card.reps>=3&&recallProbability(card,now)>=.9)return 'long';
+  if(card.stability>=30&&(card.successfulDays||0)>=3&&recallProbability(card,now)>=.9)return 'long';
   if(card.stability>=7&&recallProbability(card,now)>=.9)return 'stable';
   return 'learning';
 }

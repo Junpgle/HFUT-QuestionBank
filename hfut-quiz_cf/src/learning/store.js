@@ -1,9 +1,14 @@
 import localforage from 'localforage';
 import { api } from '../api';
 import { localDay,replayEvents } from './scheduler';
+import {mergeBackup} from './backup';
 const db=localforage.createInstance({name:'qbank-smart-learning',storeName:'learning_v1'});
 const key=(user,subject)=>String(user?.id??'guest')+':'+subject;
-const queues=new Map();
+const queues=new Map(), exchanges=new Map(), subscribers=new Map();
+const channel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel('qbank-learning-v1'):null;
+function notify(k){for(const cb of subscribers.get(k)||[])cb();}
+if(channel)channel.onmessage=e=>{if(typeof e.data==='string')notify(e.data);};
+export function subscribeLearning(user,subject,cb){const k=key(user,subject);if(!subscribers.has(k))subscribers.set(k,new Set());const set=subscribers.get(k);set.add(cb);return ()=>{set.delete(cb);if(!set.size)subscribers.delete(k);};}
 export function makeLearningEvent(kind,fields={},at=Date.now()){
   return {id:crypto.randomUUID(),kind,at,day:localDay(at),...fields};
 }
@@ -29,7 +34,7 @@ export async function updateLearning(user,subject,mutate){
   return exclusive(key(user,subject),async()=>{
     const old=await loadLearning(user,subject);
     const next=mutate(old);
-    if(next!==old)await db.setItem(key(user,subject),next);
+    if(next!==old){await db.setItem(key(user,subject),next);notify(key(user,subject));channel?.postMessage(key(user,subject));}
     return next;
   });
 }
@@ -44,7 +49,12 @@ export function appendLearning(user,subject,e){
 function checkAccount(user){
   if(String(api.getCurrentUser()?.id)!==String(user.id))throw Error('账号已切换，请重新同步');
 }
-export async function exchangeLearning(user,subject){
+export function exchangeLearning(user,subject){
+  const k=key(user,subject);
+  if(exchanges.has(k))return exchanges.get(k);
+  const p=performExchange(user,subject).finally(()=>exchanges.delete(k));exchanges.set(k,p);return p;
+}
+async function performExchange(user,subject){
   if(!user||subject.startsWith('custom_'))return loadLearning(user,subject);
   checkAccount(user);
   const snapshot=await loadLearning(user,subject);
@@ -55,14 +65,14 @@ export async function exchangeLearning(user,subject){
     checkAccount(user);
     const batch=pending.slice(i,i+50);
     const res=await api.request('/learning/events','POST',{subject,events:batch.map(e=>{const copy={...e};delete copy.synced;return copy;})});
-    if(!res?.success)throw new Error('学习记录上传未确认');
+    if(!res?.success||String(res.userId)!==String(user.id))throw new Error('学习记录上传未确认');
     ack.push(...batch.map(e=>({...e,synced:true})));
   }
   const remote=[];
   for(let page=0;page<100;page++){
     checkAccount(user);
     const res=await api.request('/learning/events?subject='+encodeURIComponent(subject)+'&after='+cursor);
-    if(!res?.success||!Array.isArray(res.events)||!Number.isSafeInteger(res.cursor)||res.cursor<cursor)throw new Error('学习记录下载未确认');
+    if(!res?.success||String(res.userId)!==String(user.id)||!Array.isArray(res.events)||!Number.isSafeInteger(res.cursor)||res.cursor<cursor)throw new Error('学习记录下载未确认');
     remote.push(...res.events.map(e=>({...e,synced:true})));
     cursor=res.cursor;
     if(!res.more)break;
@@ -99,4 +109,10 @@ export function scheduleLearningSync(user,subject){
     exchangeLearning(user,subject).catch(e=>console.warn('智能学习同步延后',e));
   },15000);
   timers.set(k,timer);
+}
+
+export async function importLearning(user,subject,events){
+  const next=await updateLearning(user,subject,old=>({...old,events:mergeBackup(old.events,events)}));
+  scheduleLearningSync(user,subject);
+  return next;
 }

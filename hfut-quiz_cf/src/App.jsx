@@ -5,7 +5,7 @@
 import {useState, useEffect, useLayoutEffect, useRef, useMemo} from 'react';
 import {flushSync} from 'react-dom';
 import {api} from './api';
-import {loadSiteMetrics} from './utils/siteMetrics';
+import {loadSiteMetrics,readSiteMetricsCache} from './utils/siteMetrics';
 import localforage from 'localforage';
 import {
     BookOpen, CheckCircle, Brain, Settings,
@@ -340,13 +340,13 @@ function App() {
     const [answerResults, setAnswerResults] = useState({});
     // 在线人数统计
     const [onlineCount, setOnlineCount] = useState(null);
-    const [siteMetrics,setSiteMetrics]=useState(null);
+    const [siteMetrics,setSiteMetrics]=useState(readSiteMetricsCache);
     useEffect(()=>{
         // Do not count local development/preview traffic. Guests and signed-in users count alike.
         if(!['https://qbank.junpgle.me','https://cxcy.junpgle.me'].includes(window.location.origin))return;
         let active=true;
         const load=()=>loadSiteMetrics(api).then(data=>{
-            if(active){setSiteMetrics(data);setOnlineCount(data.onlineCount);}
+            if(active){setSiteMetrics(data);if(data.onlineCount!==null)setOnlineCount(data.onlineCount);}
         }).catch(()=>{});
         if(navigator.onLine!==false)load();
         window.addEventListener('online',load);

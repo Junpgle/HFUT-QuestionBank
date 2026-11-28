@@ -1,0 +1,35 @@
+name: Smart learning checks
+on:
+  pull_request:
+    paths:
+      - 'hfut-quiz_cf/**'
+      - 'hfut-backend/**'
+      - '.github/workflows/smart-learning.yml'
+  push:
+    branches:
+      - feat/smart-learning
+permissions:
+  contents: read
+jobs:
+  learning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: hfut-quiz_cf/package-lock.json
+      - name: Verify scheduler and existing question parsers
+        working-directory: hfut-quiz_cf
+        run: node --test src/learning/scheduler.test.js src/utils/culturalRelics.test.js
+      - name: Install frontend dependencies
+        working-directory: hfut-quiz_cf
+        run: npm ci
+      - name: Build frontend
+        working-directory: hfut-quiz_cf
+        run: npm run build
+      - name: Check Worker source
+        run: |
+          node --check hfut-backend/src/index.js
+          node --check hfut-backend/src/learning-sync.js

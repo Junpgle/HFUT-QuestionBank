@@ -3251,7 +3251,7 @@ function App() {
                                         </div>
                                     </div>
                                 </div>
-                                <button type="button" disabled={bankStatus !== 'ready'} onClick={() => setCurrentMode('smart-learning')} className="w-full rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white p-4 font-bold disabled:opacity-50 flex justify-center items-center gap-2"><Brain size={20}/> 智能学习 · 考试计划</button>
+                                <button type="button" disabled={bankStatus !== 'ready'} onClick={() => setCurrentMode('smart-learning')} className="w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white py-3.5 px-4 font-bold shadow-lg shadow-indigo-500/20 hover:shadow-xl hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex justify-center items-center gap-2 text-sm md:text-base"><Brain size={20}/> 智能学习 · 考试计划</button>
                                 <div className="grid grid-cols-2 gap-4 pt-2">
                                     <button onClick={() => generateAndStartQuiz('quiz')}
                                             disabled={bankStatus !== 'ready'}

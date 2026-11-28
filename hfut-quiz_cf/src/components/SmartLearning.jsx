@@ -820,8 +820,8 @@ function LearningQuestionGrid({entries,currentId,busy,onSelect,showLearned,onTog
   );
 }
 
-function QuestionStageProgress({card,now,isHistory,historyPos}){
-  const stage=questionMemoryStage(card,now);
+function QuestionStageProgress({card,now,isHistory,historyPos,relearning=false}){
+  const stage=relearning?{index:1,label:'重新学习',detail:'重新记忆正确答案，之后再次独立回忆'}:questionMemoryStage(card,now);
   const tone=stage.index===1?'bg-amber-500 dark:bg-amber-400':stage.index>=3?'bg-emerald-500 dark:bg-emerald-400':'bg-indigo-500 dark:bg-indigo-400';
   return (
     <div className="flex items-center gap-2 sm:gap-3 min-w-0 px-1 text-xs leading-5" title={MEMORY_STAGES.join(' → ')+'；'+stage.detail}>
@@ -847,9 +847,15 @@ function SmartLearningQuestion({
 }){
   const intro=task.kind==='intro';
   const selected=answer.selected||[],inputs=answer.inputs||[],result=answer.result||null;
+  const relearning=!isHistory&&!intro&&answer.relearning===true;
   const show=isHistory||intro||result!==null;
   const big=q.type==='big';
   const patch=p=>{if(!busy&&!isHistory)onAnswer({...answer,...p});};
+  const chooseRating=rating=>{
+    if(busy||isHistory)return;
+    if(rating===1&&!intro&&!relearning){patch({relearning:true});return;}
+    return onDone(rating);
+  };
   const submit=(v=selected)=>{
     if(show||busy||isHistory||!v.length)return;
     const a=correctIndices(q);
@@ -857,7 +863,9 @@ function SmartLearningQuestion({
   };
   const solution=q.type==='fill'?parseFillAnswer(q.options?.[0],q.question).map(x=>x.join(' / ')).join('；'):big?q.options?.join('\n')||String(q.rawAnswer??''):correctIndices(q).map(i=>q.options?.[i]).filter(Boolean).join('；');
 
-  const ratingButtons=useMemo(()=>result==='wrong'||result==='forgot'
+  const ratingButtons=useMemo(()=>relearning
+    ?[[1,'已重新记忆，继续','border-transparent bg-gradient-to-r from-blue-500 to-blue-700 text-white shadow-md']]
+    :result==='wrong'||result==='forgot'
     ?[[1,'重新学习','border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300']]
     :result==='hint'
       ?[
@@ -869,11 +877,11 @@ function SmartLearningQuestion({
         [2,'模糊','border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300'],
         [3,'记得','border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300'],
         [4,'很熟悉','border-transparent bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white shadow-md'],
-      ],[result]);
+      ],[result,relearning]);
 
   useEffect(()=>{
     const onKey=e=>{
-      if(busy||isHistory||ignoreQuizShortcut(e))return;
+      if(busy||isHistory||ignoreQuizShortcut(e)||e.repeat)return;
       const key=e.key;
       if(intro){
         if(key==='Enter'||key===' '){e.preventDefault();onDone();}
@@ -900,14 +908,14 @@ function SmartLearningQuestion({
       }
       if(/^[1-4]$/.test(key)){
         const r=Number(key);
-        if(ratingButtons.some(([val])=>val===r)){e.preventDefault();onDone(r);}
+        if(ratingButtons.some(([val])=>val===r)){e.preventDefault();chooseRating(r);}
         return;
       }
       if(key==='Enter'||key===' '){
         e.preventDefault();
-        if(ratingButtons.length===1)onDone(ratingButtons[0][0]);
-        else if(ratingButtons.some(([val])=>val===3))onDone(3);
-        else onDone(ratingButtons[ratingButtons.length-1][0]);
+        if(ratingButtons.length===1)chooseRating(ratingButtons[0][0]);
+        else if(ratingButtons.some(([val])=>val===3))chooseRating(3);
+        else chooseRating(ratingButtons[ratingButtons.length-1][0]);
       }
     };
     window.addEventListener('keydown',onKey);
@@ -953,7 +961,7 @@ function SmartLearningQuestion({
   ):(
     <div className={`grid gap-2 w-full ${ratingButtons.length===1?'grid-cols-1':ratingButtons.length===2?'grid-cols-2':'grid-cols-4'}`}>
       {ratingButtons.map(([r,t,tone])=>(
-        <button key={r} type="button" disabled={busy} onClick={()=>onDone(r)} className={`px-2 py-2.5 rounded-xl text-xs font-bold border transition-all disabled:opacity-50 ${tone}`}>
+        <button key={r} type="button" disabled={busy} onClick={()=>chooseRating(r)} className={`px-2 py-2.5 rounded-xl text-xs font-bold border transition-all disabled:opacity-50 ${tone}`}>
           {t}
         </button>
       ))}
@@ -989,7 +997,7 @@ function SmartLearningQuestion({
   ):(
     <div className="flex flex-col gap-2.5 w-full">
       {ratingButtons.map(([r,t,tone])=>(
-        <button key={r} type="button" disabled={busy} onClick={()=>onDone(r)} className={`w-full min-h-[44px] px-4 py-3 rounded-2xl text-sm font-bold border transition-all disabled:opacity-50 inline-flex items-center justify-between ${tone}`}>
+        <button key={r} type="button" disabled={busy} onClick={()=>chooseRating(r)} className={`w-full min-h-[44px] px-4 py-3 rounded-2xl text-sm font-bold border transition-all disabled:opacity-50 inline-flex items-center justify-between ${tone}`}>
           <span>{t}</span>
           <kbd aria-hidden="true" className={`${kbdClass} ${r===4?'border-white/30 bg-white/15 text-white':'border-current/25 bg-white/60 dark:bg-black/20'}`}>{r}</kbd>
         </button>
@@ -999,7 +1007,7 @@ function SmartLearningQuestion({
 
   return (
     <>
-      <QuestionStageProgress card={card} now={now} isHistory={isHistory} historyPos={historyPos}/>
+      <QuestionStageProgress card={card} now={now} isHistory={isHistory} historyPos={historyPos} relearning={relearning}/>
 
       <div className="grid md:grid-cols-3 gap-4 md:gap-6 items-stretch">
         {big?(
@@ -1024,7 +1032,7 @@ function SmartLearningQuestion({
         ):(
           <QuizQuestionPanel
             currentQ={q}
-            isQuiz={!isInspection&&!intro&&!(result==='forgot')}
+            isQuiz={!isInspection&&!intro&&!relearning&&!(result==='forgot')}
             isAnswered={show}
             selectedIndices={selected}
             fillInputs={inputs}
@@ -1043,7 +1051,7 @@ function SmartLearningQuestion({
 
         <div className="hidden md:flex h-full flex-col justify-between bg-white dark:bg-slate-900 rounded-[1.5rem] md:rounded-[2rem] shadow-sm border border-slate-200 dark:border-slate-800 p-5 md:p-6 animate-enter gap-4">
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{isHistory?'历史答题':intro?'记忆确认':!show?'独立回忆':'记忆评分'}</span>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{isHistory?'历史答题':relearning?'重新记忆':intro?'记忆确认':!show?'独立回忆':'记忆评分'}</span>
            </div>
 
           <div className="my-auto">
@@ -1072,7 +1080,7 @@ function SmartLearningQuestion({
               </button>
             </div>
             <p className="text-[11px] text-slate-400 dark:text-slate-500 text-center leading-relaxed">
-              {isHistory?'← / → 切换历史题 · Esc 返回计划':intro?'Space 继续 · 1 难记 · ←/→ 切题':!show?'1-4/A-D 选答案 · Space 看答案':'1-4 评分 · Space 记得 · ←/→ 切题'}
+              {isHistory?'← / → 切换历史题 · Esc 返回计划':relearning?'Space 确认重新记忆':intro?'Space 继续 · 1 难记 · ←/→ 切题':!show?'1-4/A-D 选答案 · Space 看答案':'1-4 评分 · Space 记得 · ←/→ 切题'}
             </p>
           </div>
         </div>
@@ -1080,7 +1088,7 @@ function SmartLearningQuestion({
 
       {show&&(
         <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] p-5 md:p-8 shadow-sm border border-slate-200 animate-enter space-y-4 dark:bg-slate-900 dark:border-slate-800">
-          {!intro&&result!==null&&result!=='self'&&(
+          {!intro&&!relearning&&result!==null&&result!=='self'&&(
             <div
               role="status"
               className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-bold ${
@@ -1095,6 +1103,7 @@ function SmartLearningQuestion({
           )}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-green-600 dark:text-green-400">参考答案</h3>
+            {relearning&&<p className="mt-1 text-xs text-slate-500 dark:text-slate-400">重新记忆正确答案与解析，确认后再安排独立回忆。</p>}
             <div className="mt-1.5 whitespace-pre-wrap text-sm sm:text-base font-medium leading-relaxed text-slate-800 dark:text-slate-100 break-words">
               {solution}
             </div>

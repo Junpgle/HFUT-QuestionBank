@@ -63,6 +63,11 @@ test('backup import merges on explicit confirmation and cross-day review hides a
   await page.getByRole('button',{name:/错误选项乙/}).click();
   await expect(page.getByText('需要重新巩固',{exact:true})).toBeVisible();
   await button(page,'重新学习').click();
+  await expect(page.getByRole('heading',{name:'测试单选：首题'})).toBeVisible();
+  await expect(page.getByRole('progressbar',{name:'本题记忆阶段进度'})).toHaveAttribute('aria-valuetext','重新学习');
+  await expect(page.getByRole('heading',{name:'参考答案'})).toBeVisible();
+  expect(await page.evaluate(()=>window.__learningAttempts.length)).toBe(0);
+  await button(page,'已重新记忆，继续').click();
   await returnPlan(page);
   expect(await page.evaluate(()=>window.__learningAttempts.map(a=>({id:a.questionId,correct:a.isCorrect,objective:a.objective})))).toEqual([{id:'MG-1',correct:false,objective:true}]);
   if(await button(page,'学习记录备份 / 恢复').isVisible())await button(page,'学习记录备份 / 恢复').click();
